@@ -52,6 +52,16 @@ python3 -m hbf_eval.hbfcheck                # the 25 HBF phenomena checks, with 
 python3 -m hbf_eval.bench list              # names of the bundled schemes
 ```
 
+### Docker (optional)
+
+A `Dockerfile` pins the environment (Ubuntu 24.04, torch 2.15.0, numpy 2.5.3, gcc) for reproducing runs. It is a convenience: the
+device model's C part is bit-exact, but the torch parts (index construction) can differ slightly across torch versions and CPUs.
+
+```bash
+docker build -t hbf_eval .
+docker run --rm -v "$PWD/results:/work/results" hbf_eval python3 -m hbf_eval.bench run --schemes haven --workers 2
+```
+
 ### Scoring schemes: `python3 -m hbf_eval.bench run`
 
 `--schemes` takes a comma-separated list; each item is either a bundled name (`haven`) or **a path to your own file**
