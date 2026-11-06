@@ -74,8 +74,8 @@ These are ports into the scheme language, not the authors' code; see each file's
 ### Our graph schemes (`compass.py` ... `cache.py`)
 
 Seven variants of the baseline graph search, each adding mechanisms that shorten the dependent chain of reads, cut the number of
-page reads, or use the page buffers. Scores are the mean of the four tasks at recall@10 = 0.90, 100K vectors, from the report
-(`docs/report.md`, section 6; a 5-point effort grid, so they differ slightly from `bench` output, which uses 9 points).
+page reads, or use the page buffers. Scores are the mean of the four tasks at recall@10 = 0.90, 100K vectors (a 5-point effort grid, so they
+differ slightly from `bench` output, which uses 9 points).
 
 | Scheme | Score | Mechanisms |
 |---|---|---|
@@ -90,11 +90,9 @@ page reads, or use the page buffers. Scores are the mean of the four tasks at re
 
 Their knob values are the tuned ones; `reference/results_100k.jsonl` has the `bench` output of Compass, Atlas and Router.
 
-## Report
+## Figures
 
-`docs/report.md` is the write-up: why a new evaluator, how scores are computed, how the device model was checked (HBF literature
-phenomena, an independent MQSim-based simulator, parameter perturbations, 100K vs 1M rankings), and the results with figures
-(`docs/figs/`).
+`docs/figs/` has the charts of the first results (scoring, device-model checks, rankings per task, recall levels, weakly clustered data).
 
 ## Writing a scheme
 
