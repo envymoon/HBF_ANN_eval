@@ -134,7 +134,7 @@ If your idea trades preprocessing for query speed (a better layout that takes a 
 
 ### Real datasets
 
-By default the tasks run on synthetic stand-ins with the shape of SIFT (128-d uint8, L2) and DEEP (96-d float32, angular). To use the real
+By default the tasks run on synthetic stand-ins with the shape of SIFT (128-d uint8, L2) and DEEP (96-d float32; the stand-in uses L2, the real deep-image-96 set is angular). To use the real
 files, prepare them once and pass `--data-root`:
 
 ```bash
