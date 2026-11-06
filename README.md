@@ -71,6 +71,31 @@ python3 -m hbf_eval.bench compare results/results.jsonl reference/results_100k.j
 
 These are ports into the scheme language, not the authors' code; see each file's header and the papers for the originals.
 
+### Our graph schemes (`compass.py` ... `cache.py`)
+
+Seven variants of the baseline graph search, each adding mechanisms that shorten the dependent chain of reads, cut the number of
+page reads, or use the page buffers. Scores are the mean of the four tasks at recall@10 = 0.90, 100K vectors, from the report
+(`docs/report.md`, section 6; a 5-point effort grid, so they differ slightly from `bench` output, which uses 9 points).
+
+| Scheme | Score | Mechanisms |
+|---|---|---|
+| `compass.py` | −0.36 | entry table in HBM + locality-reordered layout + no host syncs |
+| `atlas.py` | −0.42 | cluster-ordered layout + cluster-centroid entry |
+| `router.py` | −0.48 | beam of 2 + query-routed entry |
+| `reorder.py` | −0.65 | entry table + locality-reordered layout |
+| `entry.py` | −0.80 | entry table only |
+| `batch.py` | −0.90 | cluster-ordered layout + wake-up batching |
+| `cache.py` | −1.00 | HBM cache of the adjacency lists of high in-degree nodes |
+| `baseline.py` | −1.58 | none |
+
+Their knob values are the tuned ones; `reference/results_100k.jsonl` has the `bench` output of Compass, Atlas and Router.
+
+## Report
+
+`docs/report.md` is the write-up: why a new evaluator, how scores are computed, how the device model was checked (HBF literature
+phenomena, an independent MQSim-based simulator, parameter perturbations, 100K vs 1M rankings), and the results with figures
+(`docs/figs/`).
+
 ## Writing a scheme
 
 A scheme file has a docstring, a `KNOBS` table and top-level functions: `build(vectors, ctx)`, `layout(index, vectors, ctx)`,

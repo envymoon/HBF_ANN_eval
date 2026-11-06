@@ -2,7 +2,8 @@
 from pathlib import Path
 
 HERE = Path(__file__).parent
-NAMES = ("baseline", "diskann", "pipeann", "pageann", "haven", "starling", "cagra")
+NAMES = ("baseline", "diskann", "pipeann", "pageann", "haven", "starling", "cagra",
+         "compass", "atlas", "router", "reorder", "entry", "batch", "cache")  # the last seven: our graph schemes, best first
 
 
 def path(name):
