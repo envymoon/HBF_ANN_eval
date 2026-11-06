@@ -89,18 +89,56 @@ not `--mem-gb` (a process that hits the cap fails with a memory error and is rec
 the graph schemes 7-16 minutes each). Finished (scheme, data, scale) jobs are skipped on rerun, so an interrupted run resumes.
 With `--set` or `--wide` the result is labelled `scheme@wide` / `scheme@knob=value`, so variants sit side by side in `report`.
 
-**Data variants.**
-- `clustered` (default): the SIFT-like and DEEP-like stand-ins have well-separated clusters, as real descriptor sets roughly do.
-  Cluster-based schemes (IVF, cluster-ordered layouts, centroid entries) get an easy time.
-- `flat`: the same shapes with weakly clustered data (no clear cluster boundaries). It checks whether a scheme's result depends
-  on cluster structure. A scheme whose score collapses on `flat` was leaning on the clusters.
-- `clustered_m1`, `flat_m2`, ...: a suffix `_mK` runs on a platform with K HBM positions instead of the default 4 (of 8).
+### Why `clustered`, `flat` and `--wide` exist
 
-**`--wide`.** A scheme maps the host's effort (0 to 1) onto its search effort, usually between a `*_lo` and a `*_hi` knob
-(for example `nprobe_lo` to `nprobe_hi`). The default `*_hi` is a moderate value; at that value a scheme may never reach
-recall 0.99 and then scores the floor (-8) at that level. `--wide` sets every knob whose name ends in `_hi` to its declared maximum,
-so the scheme can try its highest effort. It changes nothing for a scheme without `*_hi` knobs. Use it when a scheme's 0.95 / 0.99
-column is the floor, to tell "cannot reach it" from "the default range stops short".
+They answer one question: *is this scheme's score a property of the scheme, or of the benchmark setting it was run in?*
+You do not need them for a first run; the defaults are the standard setting.
+
+- **`clustered` (default)** - synthetic SIFT-like and DEEP-like data with well-separated clusters, roughly like real descriptor sets.
+  This is the standard setting and what all scores in this README use. Schemes that exploit cluster structure (IVF lists, cluster-ordered
+  layouts, centroid entry points) have an easy time on it.
+- **`flat`** - the same shapes, but weakly clustered: no clear cluster boundaries, a harder case for anything that routes by cluster.
+  Run it next to `clustered`; if a scheme's score collapses on `flat`, its result depended on the clusters, not on the memory system.
+- **`clustered_m1`, `flat_m2`, ...** - the suffix `_mK` runs on a platform with K HBM positions out of 8 instead of 4, to see how much
+  a scheme depends on having a lot of HBM.
+- **`--wide`** - a scheme maps the host's effort (0 to 1) onto its search effort between a `*_lo` and a `*_hi` knob (for example `nprobe_lo` to
+  `nprobe_hi`). The default `*_hi` is a moderate value, so a scheme may never reach recall 0.99 and then scores the floor (-8) at that level.
+  `--wide` opens every `*_hi` knob to its declared maximum. Use it when the 0.95 or 0.99 column is -8, to tell "this scheme cannot reach that
+  recall" from "its default range stops short". It changes nothing for a scheme without `*_hi` knobs.
+- **Real data** - see below. With `--data-root` the tasks use the real SIFT and DEEP files instead of the synthetic stand-ins.
+
+### What the score does not measure
+
+The score covers **query serving on the simulated device**: `serve`, the HBF reads it issues, and the GPU work it runs. The offline stages
+are free and unmeasured:
+
+- **Index construction and preprocessing** (`build`: graph construction, k-means, PQ training, sorting, reordering) is not timed, not
+  charged to the device, and its cost does not enter the score. The only limit is a wall-clock budget per scheme (1 h at 100k), and the
+  size of `build` is not part of the result. A scheme that needs hours of preprocessing scores the same as one that needs seconds.
+- **Writing the index to HBF** (`layout`) is free too: the pages appear on the device before the first query. Program time, write energy
+  and wear for loading the index are not modelled; only refresh and programs *during* serving (refresh debt, `ctx.refresh`) are.
+- **Updates and deletions**, **index size on flash** beyond the capacity limit, **endurance**, and **tail recall** (recall is the mean
+  over queries; the worst-5% value is recorded in the diagnostics but not scored).
+
+If your idea trades preprocessing for query speed (a better layout that takes a long time to compute), the score shows only the query-side gain.
+
+### Real datasets
+
+By default the tasks run on synthetic stand-ins with the shape of SIFT (128-d uint8, L2) and DEEP (96-d float32, angular). To use the real
+files, prepare them once and pass `--data-root`:
+
+```bash
+pip install h5py pyarrow                    # only for the preparation script
+python3 tools/prepare_dataset.py sift-128-euclidean.hdf5 data/sift --dtype uint8 --metric l2
+python3 tools/prepare_dataset.py --parquet-base train-00001-of-00009.parquet --parquet-query test-00001-of-00001.parquet \
+        data/deep --dtype float32 --metric angular --max-base 200000
+python3 -m hbf_eval.bench run --schemes my/scheme.py,haven --data-root data --out results_real --cache cache_real
+```
+
+`sift-128-euclidean.hdf5` (about 0.5 GB, 1M x 128) is the ann-benchmarks file; the DEEP shard is the ann-benchmarks `deep-image-96-angular`
+data (one train shard of about 0.45 GB plus the test file). The tasks take a fixed random 100K-vector subset of the base and 3072 of the
+queries, and compute exact neighbours themselves. Use a separate `--out` and `--cache` for real data so it is not mixed with the synthetic
+results.
 
 ## Reference schemes (`hbf_eval/schemes/`)
 
