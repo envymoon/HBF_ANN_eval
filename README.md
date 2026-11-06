@@ -279,3 +279,12 @@ hbf_eval/  device.py device_c.c fastdevice.py   device model (Python reference, 
            schemes/                             reference schemes
 tests/     reference/                           tests; the scores the reference schemes got when this evaluator was split out
 ```
+
+## Current limitations
+
+The framework is still under development. These are known limits of the current version, not design choices; they are planned work.
+
+- **No dynamic updates.** The index is built once and read-only: no insertion, deletion or rebuild during serving, and writes are not simulated.
+- **One platform: GPU + HBM + HBF.** No host CPU computation, no host memory or SSD tier, no multiple GPUs or network. Designs that depend on these cannot be expressed.
+- **GPU computation is billed from tensor shapes.** Custom CUDA kernels, operator fusion and other low-level optimisations can be neither expressed nor measured.
+- **The score covers throughput and latency only.** Build time, preprocessing, index size, update performance and tail recall do not affect it.
