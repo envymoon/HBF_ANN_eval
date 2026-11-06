@@ -3,6 +3,8 @@
     python3 -m hbf_eval.bench list
     python3 -m hbf_eval.bench run --scale 100k --data clustered --workers 4
     python3 -m hbf_eval.bench run --schemes baseline,haven --scale 100k --data flat --wide
+    python3 -m hbf_eval.bench check path/to/my_scheme.py
+    python3 -m hbf_eval.bench run --schemes path/to/my_scheme.py --set nprobe_hi=96 --set nlist=2048 --mem-gb 8
     python3 -m hbf_eval.bench report
     python3 -m hbf_eval.bench compare results/results.jsonl reference/results_100k.jsonl
 
@@ -42,14 +44,34 @@ def label_of(name):
     return os.path.basename(name)[:-3] if name.endswith(".py") else name
 
 
-def job(name, data, scale_name, cache, wide=False, data_root=None):
-    resource.setrlimit(resource.RLIMIT_AS, (ADDRESS_SPACE[scale_name], ADDRESS_SPACE[scale_name]))
+def parse_sets(items):
+    out = {}
+    for item in items or []:
+        name, eq, value = item.partition("=")
+        if not eq:
+            sys.exit("--set expects name=value, got %r" % item)
+        out[name.strip()] = float(value)
+    return out
+
+
+def tag(name, wide, sets):
+    return label_of(name) + ("@wide" if wide else "") + "".join("@%s=%g" % kv for kv in sorted(sets.items()))
+
+
+def job(name, data, scale_name, cache, wide=False, data_root=None, sets=None, mem_gb=None):
+    limit = int(mem_gb * (1 << 30)) if mem_gb else ADDRESS_SPACE[scale_name]
+    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     import torch
     torch.set_num_threads(1)
     from . import runner, scheme
     from .tasks import suite
     sch = scheme.load(find(name))
     over = {n: s["high"] for n, s in sch.knobs.items() if n.endswith("_hi")} if wide else {}
+    unknown = sorted(set(sets or {}) - set(sch.knobs))
+    if unknown:
+        sys.exit("unknown knob(s) %s; declared: %s" % (unknown, sorted(sch.knobs)))
+    over.update(sets or {})
+    label = tag(name, wide, sets or {})
     knobs, space = sch.knob_values(over), sch.namespace()
     scale = SCALES[scale_name]
     base, _, mm = data.partition("_m")
@@ -66,9 +88,22 @@ def job(name, data, scale_name, cache, wide=False, data_root=None):
                                                         "compute_share", "wake_share", "unit_util", "power_wait_share")} if rec.get("diag") else None
         keep["dataset"] = t["spec"]["dataset"]
         tasks.append(keep)
-        print(json.dumps({"label": label_of(name) + ("@wide" if wide else ""), "data": data, "scale": scale_name, "task": t["name"],
+        print(json.dumps({"label": label, "data": data, "scale": scale_name, "task": t["name"],
                           "failure": rec["failure"], "speedups": rec.get("speedups"), "seconds": rec["seconds"]}), file=sys.stderr, flush=True)
-    return {"label": label_of(name) + ("@wide" if wide else ""), "data": data, "scale": scale_name, "tasks": tasks}
+    return {"label": label, "data": data, "scale": scale_name, "tasks": tasks}
+
+
+def check(a):
+    """Load a scheme file through the same checks a run applies and print what the evaluator sees. Runs nothing."""
+    from . import scheme
+    sch = scheme.load(find(a.new))
+    print("ok:", a.new)
+    print("functions:", ", ".join(sorted(sch.functions)))
+    print("knobs (default, low, high, scale):")
+    for n, k in sch.knobs.items():
+        print("  %-18s %-12g %-12g %-12g %s" % (n, k["default"], k["low"], k["high"], k["scale"]))
+    for entry, key in sch.stage_keys(sch.knob_values()).items():
+        print("%s reads knobs: %s" % (entry, ", ".join(key["knobs"]) or "-"))
 
 
 def results(out):
@@ -80,17 +115,25 @@ def run(a):
     os.makedirs(a.out, exist_ok=True)
     done = {(r["label"], r["data"], r["scale"]) for r in results(a.out)}
     names = a.schemes.split(",") if a.schemes else ["baseline", *PUBLISHED]
-    suffix = "@wide" if a.wide else ""
-    todo = [(n, d, s) for s in a.scale.split(",") for d in a.data.split(",") for n in names if (label_of(n) + suffix, d, s) not in done]
+    sets = parse_sets(a.set)
+    from . import scheme
+    for n in names:  # fail before any process starts: bad file, bad knob name
+        known = scheme.load(find(n)).knobs
+        if set(sets) - set(known):
+            sys.exit("%s: unknown knob(s) %s; declared: %s" % (n, sorted(set(sets) - set(known)), sorted(known)))
+    todo = [(n, d, s) for s in a.scale.split(",") for d in a.data.split(",") for n in names if (tag(n, a.wide, sets), d, s) not in done]
     procs, log = [], open(os.path.join(a.out, "driver.log"), "a")
     while todo or procs:
         while todo and len(procs) < a.workers:
             n, d, s = todo.pop(0)
-            err = open(os.path.join(a.out, "stderr_%s_%s_%s%s.log" % (label_of(n), d, s, suffix)), "w")
+            err = open(os.path.join(a.out, "stderr_%s_%s_%s.log" % (tag(n, a.wide, sets), d, s)), "w")
             cmd = [sys.executable, "-m", "hbf_eval.bench", "one", "--scheme", n, "--data", d, "--scale", s, "--cache", a.cache]
             cmd += ["--data-root", a.data_root] if a.data_root else []
+            cmd += ["--mem-gb", str(a.mem_gb)] if a.mem_gb else []
+            for item in a.set or []:
+                cmd += ["--set", item]
             p = subprocess.Popen(cmd + (["--wide"] if a.wide else []), cwd=ROOT, stdout=subprocess.PIPE, stderr=err, text=True)
-            procs.append(((label_of(n) + suffix, d, s), p, time.time()))
+            procs.append(((tag(n, a.wide, sets), d, s), p, time.time()))
             print(time.strftime("%F %T"), "start", *procs[-1][0], file=log, flush=True)
         time.sleep(5)
         for item in list(procs):
@@ -144,7 +187,7 @@ def compare(a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cmd", choices=("run", "one", "report", "list", "compare"))
+    ap.add_argument("cmd", choices=("run", "one", "report", "list", "compare", "check"))
     ap.add_argument("new", nargs="?")
     ap.add_argument("old", nargs="?")
     ap.add_argument("--scheme")
@@ -155,10 +198,12 @@ def main():
     ap.add_argument("--wide", action="store_true")
     ap.add_argument("--out", default=os.path.join(ROOT, "results"))
     ap.add_argument("--cache", default=os.path.join(ROOT, "cache"))
+    ap.add_argument("--set", action="append", metavar="KNOB=VALUE", help="override a knob (repeatable); clamped to its declared range")
+    ap.add_argument("--mem-gb", type=float, default=None, help="address-space limit per scheme process in GiB (default 12 at 100k, 14 at 1m)")
     ap.add_argument("--data-root", default=None, help="folder of prepared datasets (see data.py); default: synthetic stand-ins")
     a = ap.parse_args()
     if a.cmd == "one":
-        print(json.dumps(job(a.scheme, a.data, a.scale, a.cache, a.wide, a.data_root)))
+        print(json.dumps(job(a.scheme, a.data, a.scale, a.cache, a.wide, a.data_root, parse_sets(a.set), a.mem_gb)))
     elif a.cmd == "run":
         run(a)
     elif a.cmd == "list":
@@ -166,6 +211,8 @@ def main():
         print("\n".join(schemes.NAMES))
     elif a.cmd == "compare":
         compare(a)
+    elif a.cmd == "check":
+        check(a)
     else:
         report(a)
 

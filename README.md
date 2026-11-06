@@ -46,16 +46,61 @@ Gaussians in a low-dimensional latent space); put real data under `--data-root` 
 ## Run
 
 ```bash
-pip install -r requirements.txt            # torch, numpy; a C compiler speeds up the device model (it falls back to the Python reference)
-python3 -m unittest discover tests          # device known-answer tests, HBF phenomena checks, scheme loader
-python3 -m hbf_eval.hbfcheck                # the 25 HBF checks with their numbers
-python3 -m hbf_eval.bench run --scale 100k --data clustered --workers 4    # baseline + DiskANN, Starling, PipeANN, PageANN, HAVEN-style
-python3 -m hbf_eval.bench report
-python3 -m hbf_eval.bench compare results/results.jsonl reference/results_100k.jsonl
+pip install -r requirements.txt             # torch, numpy; a C compiler speeds up the device model (falls back to the Python reference)
+python3 -m unittest discover tests          # device known-answer tests, scheme loader
+python3 -m hbf_eval.hbfcheck                # the 25 HBF phenomena checks, with their numbers
+python3 -m hbf_eval.bench list              # names of the bundled schemes
 ```
 
-`--data flat` uses weakly clustered stand-ins (no separable clusters); `--wide` opens every effort range to its limit;
-`--data clustered_m1` runs the same data on a platform with one HBM position. `--scale 1m` is the 1M-vector setting.
+### Scoring schemes: `python3 -m hbf_eval.bench run`
+
+`--schemes` takes a comma-separated list; each item is either a bundled name (`haven`) or **a path to your own file**
+(`my/scheme.py`). Without `--schemes` it runs `baseline, diskann, starling, pipeann, pageann, haven`.
+
+```bash
+# one bundled scheme
+python3 -m hbf_eval.bench run --schemes haven --scale 100k --data clustered
+# your own file next to two references, 3 processes in parallel
+python3 -m hbf_eval.bench run --schemes my/scheme.py,baseline,haven --workers 3
+# your own file with two knobs changed and an 8 GiB memory cap
+python3 -m hbf_eval.bench run --schemes my/scheme.py --set nprobe_hi=96 --set nlist=2048 --mem-gb 8
+python3 -m hbf_eval.bench report                      # table of everything in results/results.jsonl
+python3 -m hbf_eval.bench check my/scheme.py          # load a scheme file, list its knobs; runs nothing (seconds)
+python3 -m hbf_eval.bench compare results/results.jsonl reference/results_100k.jsonl   # exit 1 on any difference
+```
+
+| Option | Meaning | Default |
+|---|---|---|
+| `--schemes a,b,path.py` | what to run | baseline + 5 published |
+| `--scale 100k \| 1m` | vectors per dataset (1m is the 1M-vector setting, much slower and larger) | `100k` |
+| `--data clustered \| flat \| ..._mK` | dataset variant, see below | `clustered` |
+| `--wide` | open every `*_hi` knob to its declared maximum | off |
+| `--set KNOB=VALUE` | override a declared knob (repeatable); clamped to its range; an unknown name is an error | knob defaults |
+| `--workers N` | how many scheme processes run at once (one process = one scheme x one data x one scale) | 4 |
+| `--mem-gb G` | address-space limit of *each* process (a cap, not a reservation) | 12 (100k), 14 (1m) |
+| `--out DIR` | results (`results.jsonl`, `driver.log`, one `stderr_*.log` per job) | `results/` |
+| `--cache DIR` | built indexes and layouts, keyed by the code and knobs they depend on, so a rerun that changes only `serve` does not rebuild | `cache/` |
+| `--data-root DIR` | real datasets instead of the synthetic stand-ins | synthetic |
+
+**Resources.** Each process uses one CPU thread for torch (fixed) and runs its four tasks one after the other, so wall time is
+set by the slowest scheme and total memory is at most `workers x mem-gb`. If your machine has less memory, lower `--workers`,
+not `--mem-gb` (a process that hits the cap fails with a memory error and is recorded with a nonzero `status`). On a
+4-core, 15 GB machine the six default schemes at 100k took about 17 minutes wall time with 4 workers (HAVEN about 1 minute,
+the graph schemes 7-16 minutes each). Finished (scheme, data, scale) jobs are skipped on rerun, so an interrupted run resumes.
+With `--set` or `--wide` the result is labelled `scheme@wide` / `scheme@knob=value`, so variants sit side by side in `report`.
+
+**Data variants.**
+- `clustered` (default): the SIFT-like and DEEP-like stand-ins have well-separated clusters, as real descriptor sets roughly do.
+  Cluster-based schemes (IVF, cluster-ordered layouts, centroid entries) get an easy time.
+- `flat`: the same shapes with weakly clustered data (no clear cluster boundaries). It checks whether a scheme's result depends
+  on cluster structure. A scheme whose score collapses on `flat` was leaning on the clusters.
+- `clustered_m1`, `flat_m2`, ...: a suffix `_mK` runs on a platform with K HBM positions instead of the default 4 (of 8).
+
+**`--wide`.** A scheme maps the host's effort (0 to 1) onto its search effort, usually between a `*_lo` and a `*_hi` knob
+(for example `nprobe_lo` to `nprobe_hi`). The default `*_hi` is a moderate value; at that value a scheme may never reach
+recall 0.99 and then scores the floor (-8) at that level. `--wide` sets every knob whose name ends in `_hi` to its declared maximum,
+so the scheme can try its highest effort. It changes nothing for a scheme without `*_hi` knobs. Use it when a scheme's 0.95 / 0.99
+column is the floor, to tell "cannot reach it" from "the default range stops short".
 
 ## Reference schemes (`hbf_eval/schemes/`)
 
@@ -96,15 +141,94 @@ Their knob values are the tuned ones; `reference/results_100k.jsonl` has the `be
 
 ## Writing a scheme
 
-A scheme file has a docstring, a `KNOBS` table and top-level functions: `build(vectors, ctx)`, `layout(index, vectors, ctx)`,
-`serve(state, events, ctx)` plus any helpers. `hbf_eval/contract.py` documents the `ctx` interface (issue HBF reads, read HBM and
-SRAM tensors, answer queries, wait, refresh). A static policy (`policy.py`) keeps scheme code deterministic and away from the
-evaluator's state: no imports, no file IO, no global RNG, no names starting with `_`. It is defence in depth, not a security
-boundary; run code you do not trust in a container.
+A scheme is one `.py` file. To test an idea you write that file; there is nothing else to register. Start by copying a bundled
+scheme that is closest to your idea (`baseline.py` for a graph, `haven.py` for IVF/PQ, `pageann.py` for a page-aligned graph) and change it.
+
+### From an idea to the three functions
+
+Think of the idea in three stages, which are the three entry functions:
+
+| Stage | Function | What you decide | Time is charged? |
+|---|---|---|---|
+| Build the index | `build(vectors, ctx) -> index` | the data structure: graph, clusters, PQ codebooks, entry points. `vectors` is a float32 `[n, D]` tensor | no |
+| Place it | `layout(index, vectors, ctx) -> plan` | which bytes go to HBF pages, HBM, or per-channel SRAM, and how pages interleave over channels | no |
+| Answer queries | `serve(state, events, ctx) -> state` | what to read now, what to compute with what came back, when to answer | **yes** |
+
+Ask of each part of your idea: *is it computed once, or per query?* Once: `build` (or `layout` if it is a placement decision).
+Per query: `serve`. A "table in HBM" is built in `build`, placed in `layout` under `plan["hbm"]`, read in `serve` with `ctx.hbm`.
+A "better page layout" is a `layout` decision (the order of records in `plan["pages"]`, and `plan["interleave"]`).
+A "prefetch / speculate / batch" idea is a `serve` decision (which `ctx.submit` calls, with `batch=True` or not, and `ctx.wait`).
+
+`serve` has no access to `vectors` or `index`: it sees only what `layout` placed, and every read goes through `ctx`
+(HBF reads cost device time; HBM and SRAM reads cost their bandwidth and latency). That is the constraint that makes the
+comparison fair, and also what you design around: whatever `serve` needs must be placed by `layout` first.
+
+### How `serve` works
+
+`serve` is called at every wake with `events`: new queries (`qids`, `queries`) and completed HBF reads (`tags`, `nbytes`,
+`data`, the bytes you asked for). It is a state machine, because a read you issue now completes later:
+
+1. For completed reads: use `data` (the bytes) and `tags` (whatever integer you attached to the read, e.g. `qid * n + node`).
+2. For new queries: choose where to start and issue reads with `ctx.submit(pages, offsets, nbytes, tags)`.
+3. Decide what to do next for each query: issue more reads, or `ctx.finish(qids, ids)` with `ids` an int64 `[len(qids), k]`.
+4. Return `state`, a dict of tensors you keep between calls (capped at 64 KiB per client).
+
+Process all queries of a wake together with batched tensor operations: one op over all queries costs about the same as one op
+for one query. Turning a tensor into a Python value (`.item()`, `.tolist()`, `bool()`, `int()`) is billed as a read-back to the host,
+so avoid it in loops. `ctx.effort` (0 to 1) is how the host sweeps search effort to draw the recall-throughput curve: map it
+to your beam width, probes, re-rank count and so on; the score reads that curve at recall 0.90, 0.95 and 0.99.
+
+### Skeleton
+
+```python
+"""My idea in one sentence."""
+
+KNOBS = {                      # name: (default, low, high, "int" | "log" | "linear")
+    "nlist": (1024, 8, 16384, "int"),
+    "probe_lo": (4, 1, 256, "int"),
+    "probe_hi": (48, 1, 1024, "int"),     # *_hi is what --wide opens
+}
+
+def build(vectors, ctx):                   # offline; ctx.knobs["nlist"], ctx.uniform(n), ctx.spec()
+    return {"centroids": ...}
+
+def layout(index, vectors, ctx):           # offline; ctx.spec() has the platform and device figures
+    return {"pages": ...,                  # uint8 [P, 4096]: the HBF image
+            "hbm": {"centroids": ...},     # tensors you will read with ctx.hbm
+            "sram": {}, "interleave": 1}
+
+def serve(state, events, ctx):             # online; the only timed stage
+    ...                                    # read events, ctx.submit(...), ctx.finish(...)
+    return state
+```
+
+This is an outline, not a runnable scheme: `haven.py` is a complete worked example of exactly this shape (IVF lists in HBM,
+re-rank reads from HBF in one Batch Read).
+
+### Rules the loader enforces
+
+- Plain top-level `def`s, one `KNOBS` literal and a docstring; nothing else at module level. `torch`, `F` (torch.nn.functional)
+  and `math` are available without importing.
+- A knob is read as `ctx.knobs["name"]` with a literal name and must be declared in `KNOBS`. `build` and `layout` results are
+  cached on the functions they reach and the knobs those read, so changing a knob only `serve` reads never rebuilds the index.
+- No `import`, file or network IO, global random state (use `ctx.uniform`), or names starting with `_`; at most 60 functions,
+  80 lines each, 160 000 characters. This is a static policy that keeps scheme code deterministic and away from the evaluator's
+  state; it is not a security boundary, so run code you do not trust in a container.
+- The full text of the interface, with every `ctx` method and the `spec` fields, is `TEXT` in `hbf_eval/contract.py`.
+
+### Check, run, read
 
 ```bash
-python3 -m hbf_eval.bench run --schemes path/to/my_scheme.py,diskann --scale 100k
+python3 -m hbf_eval.bench check my/scheme.py                      # loader and policy errors, knob table, which knobs build/layout read
+python3 -m hbf_eval.bench run --schemes my/scheme.py,baseline     # score next to the baseline
+python3 -m hbf_eval.bench report
 ```
+
+`results/results.jsonl` has, per task, the speedups at 0.90 / 0.95 / 0.99, the recall-throughput curve, the bounds and a
+`diag` block at the point nearest recall 0.95: `reads_per_query`, `senses_per_query` (page senses, which is what the device
+pays for), `hit_rate` (page-buffer hits), `unit_util` (how busy the parallel units are), `compute_share` and `wake_share`
+(time spent in GPU work and in wake-ups), `power_wait_share` (waiting for the power budget). Read them to see whether your idea
+moved the thing you meant to move. A `failure` string means the scheme was rejected or crashed in that task, with the reason.
 
 ## Layout
 
