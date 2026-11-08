@@ -32,6 +32,7 @@ DATA = {"clustered": {}, "flat": {"sift": "sift_flat", "deep": "deep_flat"}}
 SEED = 2000000
 TIME_LIMIT = {"100k": 3600, "1m": 7200}
 ADDRESS_SPACE = {"100k": 12 << 30, "1m": 14 << 30}
+RESIDENT = {"100k": None, "1m": 10 << 30}  # resident-memory budget per scheme process; over it the run stops as "memory over budget"
 PUBLISHED = ("diskann", "starling", "pipeann", "pageann", "haven")
 
 
@@ -106,6 +107,35 @@ def check(a):
         print("%s reads knobs: %s" % (entry, ", ".join(key["knobs"]) or "-"))
 
 
+def resident(pid):
+    """Resident bytes of `pid` and its descendants (Linux /proc; 0 where /proc is missing)."""
+    children, rss = {}, {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return 0
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open("/proc/%s/stat" % entry) as f:
+                fields = f.read().rsplit(")", 1)[1].split()
+            children.setdefault(int(fields[1]), []).append(int(entry))
+            rss[int(entry)] = int(fields[21]) * os.sysconf("SC_PAGE_SIZE")
+        except (OSError, IndexError, ValueError):
+            continue
+    total, stack = 0, [pid]
+    while stack:
+        p = stack.pop()
+        total += rss.get(p, 0)
+        stack += children.get(p, [])
+    return total
+
+
+def failed(key, status, failure):
+    return json.dumps({"label": key[0], "data": key[1], "scale": key[2], "status": status, "failure": failure, "tasks": []})
+
+
 def results(out):
     path = os.path.join(out, "results.jsonl")
     return [json.loads(l) for l in open(path)] if os.path.exists(path) else []
@@ -133,17 +163,33 @@ def run(a):
             for item in a.set or []:
                 cmd += ["--set", item]
             p = subprocess.Popen(cmd + (["--wide"] if a.wide else []), cwd=ROOT, stdout=subprocess.PIPE, stderr=err, text=True)
-            procs.append(((tag(n, a.wide, sets), d, s), p, time.time()))
+            budget = int(a.rss_gb * (1 << 30)) if a.rss_gb else RESIDENT[s]
+            procs.append(((tag(n, a.wide, sets), d, s), p, time.time(), budget, {"peak": 0, "over": False}))
             print(time.strftime("%F %T"), "start", *procs[-1][0], file=log, flush=True)
-        time.sleep(5)
+        time.sleep(1)
         for item in list(procs):
-            key, p, t0 = item
+            key, p, t0, budget, mem = item
             if p.poll() is None:
-                continue
+                if budget:
+                    used = resident(p.pid)
+                    mem["peak"] = max(mem["peak"], used)
+                    if used > budget:
+                        mem["over"] = True
+                        p.kill()
+                        p.wait()
+                if p.poll() is None:
+                    continue
             procs.remove(item)
             lines = p.stdout.read().strip().splitlines()
-            line = lines[-1] if p.returncode == 0 and lines else json.dumps({"label": key[0], "data": key[1], "scale": key[2],
-                                                                              "status": p.returncode, "tasks": []})
+            if mem["over"]:
+                line = failed(key, p.returncode, "memory over budget: resident memory went over %.1f GB; the run was stopped" % (budget / 2 ** 30))
+            elif p.returncode in (-9, 137):
+                line = failed(key, p.returncode, "killed by the system (exit %d), most likely out of memory: peak resident memory "
+                                                  "seen %.1f GB" % (p.returncode, mem["peak"] / 2 ** 30))
+            elif p.returncode == 0 and lines:
+                line = lines[-1]
+            else:
+                line = failed(key, p.returncode, None)
             with open(os.path.join(a.out, "results.jsonl"), "a") as f:
                 f.write(line + "\n")
             print(time.strftime("%F %T"), "done", *key, p.returncode, round(time.time() - t0), "s", file=log, flush=True)
@@ -200,6 +246,9 @@ def main():
     ap.add_argument("--cache", default=os.path.join(ROOT, "cache"))
     ap.add_argument("--set", action="append", metavar="KNOB=VALUE", help="override a knob (repeatable); clamped to its declared range")
     ap.add_argument("--mem-gb", type=float, default=None, help="address-space limit per scheme process in GiB (default 12 at 100k, 14 at 1m)")
+    ap.add_argument("--rss-gb", type=float, default=None,
+                    help="resident-memory budget per scheme process in GiB; over it the run stops and is recorded as "
+                         "'memory over budget' (default: none at 100k, 10 at 1m)")
     ap.add_argument("--data-root", default=None, help="folder of prepared datasets (see data.py); default: synthetic stand-ins")
     a = ap.parse_args()
     if a.cmd == "one":

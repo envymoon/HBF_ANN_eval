@@ -88,13 +88,17 @@ python3 -m hbf_eval.bench compare results/results.jsonl reference/results_100k.j
 | `--set KNOB=VALUE` | override a declared knob (repeatable); clamped to its range; an unknown name is an error | knob defaults |
 | `--workers N` | how many scheme processes run at once (one process = one scheme x one data x one scale) | 4 |
 | `--mem-gb G` | address-space limit of *each* process (a cap, not a reservation) | 12 (100k), 14 (1m) |
+| `--rss-gb G` | resident-memory budget of *each* process, checked every second; a process over it is stopped and recorded with `"failure": "memory over budget: ..."` | none (100k), 10 (1m) |
 | `--out DIR` | results (`results.jsonl`, `driver.log`, one `stderr_*.log` per job) | `results/` |
 | `--cache DIR` | built indexes and layouts, keyed by the code and knobs they depend on, so a rerun that changes only `serve` does not rebuild | `cache/` |
 | `--data-root DIR` | real datasets instead of the synthetic stand-ins | synthetic |
 
 **Resources.** Each process uses one CPU thread for torch (fixed) and runs its four tasks one after the other, so wall time is
 set by the slowest scheme and total memory is at most `workers x mem-gb`. If your machine has less memory, lower `--workers`,
-not `--mem-gb` (a process that hits the cap fails with a memory error and is recorded with a nonzero `status`). On a
+not `--mem-gb` (a process that hits the cap fails with a memory error and is recorded with a nonzero `status`). At 1m a
+scheme must also fit in 10 GB resident (`--rss-gb`): one that goes over is stopped and recorded as "memory over budget",
+rather than being killed by the operating system's out-of-memory killer (exit 137) with no explanation; a process the system
+kills anyway is recorded as "killed by the system ..., most likely out of memory" with the peak resident memory seen. On a
 4-core, 15 GB machine the six default schemes at 100k took about 17 minutes wall time with 4 workers (HAVEN about 1 minute,
 the graph schemes 7-16 minutes each). Finished (scheme, data, scale) jobs are skipped on rerun, so an interrupted run resumes.
 With `--set` or `--wide` the result is labelled `scheme@wide` / `scheme@knob=value`, so variants sit side by side in `report`.
