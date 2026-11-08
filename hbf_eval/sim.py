@@ -68,7 +68,10 @@ class Session:
                  deadline=math.inf, table=TABLE):
         self.device, self.k, self.n, self.N, self.table = device, k, n, clients, table
         self.pages = plan["pages"]
-        self.tiers = {"hbm": plan["hbm"], "sram": plan["sram"]}
+        # serve may rewrite rows of what layout placed (ctx.hbm_write / ctx.sram_write), so each run works on its own copy:
+        # the cached plan and the other effort levels never see a run's writes
+        self.tiers = {tier: {kk: v.clone() for kk, v in plan[tier].items()} for tier in ("hbm", "sram")}
+        self.written = {"hbm": 0, "sram": 0}
         self.queries, self.total = queries, queries.shape[0]
         self.spec, self.knobs, self.effort, self.g = spec, knobs, effort, generator
         self.state_cap, self.deadline = state_cap, deadline
@@ -130,38 +133,76 @@ class Session:
             self.kernel()
         return None
 
-    def read_tier(self, tier, name, rows):
+    def tier_tensor(self, tier, name, what):
+        store = self.tiers[tier]
+        if not isinstance(name, str) or name not in store:
+            raise SchemeError("ctx.%s: no tensor %r was placed there by layout" % (what, name))
+        t = store[name]
+        row_bytes = t.element_size() * (t[0].numel() if t.dim() else 1)
+        sector = HBM_SECTOR if tier == "hbm" else SRAM_SECTOR
+        return t, -(-row_bytes // sector) * sector
+
+    def tier_rows(self, t, rows, what):
         import torch
+        if not isinstance(rows, torch.Tensor) or rows.dtype != torch.int64:
+            raise SchemeError("ctx.%s: rows must be an int64 tensor" % what)
+        if t.dim() == 0:
+            raise SchemeError("ctx.%s: this tensor is a scalar; use rows=None" % what)
+        if rows.numel() and (int(rows.min()) < 0 or int(rows.max()) >= t.shape[0]):
+            raise SchemeError("ctx.%s: row out of range" % what)
+
+    def tier_bill(self, tier, count, unit, index):
+        """Move the cursor past one synchronous transfer of `count` rows of `unit` bytes (a read waits for its data; a write
+        is billed the same: it takes the same link for the same bytes and returns when the tier has it)."""
+        import torch
+        self.kernel()
+        if tier == "hbm":
+            self.cursor = self.device.hbm_read(self.cursor, count * unit)
+        else:
+            C = self.device.C
+            if index is None:
+                per = {c: (count // C + (1 if c < count % C else 0)) * unit for c in range(min(C, count))}
+            else:
+                per = {c: int(v) * unit for c, v in enumerate(torch.bincount(index.reshape(-1) % C, minlength=C).tolist()) if v}
+            self.cursor = self.device.sram_read(self.cursor, per)
+
+    def read_tier(self, tier, name, rows):
         with self.meter.off():
-            store = self.tiers[tier]
-            if not isinstance(name, str) or name not in store:
-                raise SchemeError("ctx.%s: no tensor %r was placed there by layout" % (tier, name))
-            t = store[name]
-            row_bytes = t.element_size() * (t[0].numel() if t.dim() else 1)
-            sector = HBM_SECTOR if tier == "hbm" else SRAM_SECTOR
-            unit = -(-row_bytes // sector) * sector
+            t, unit = self.tier_tensor(tier, name, tier)
             if rows is None:
                 out, index = t.clone(), None
                 count = t.shape[0] if t.dim() else 1
             else:
-                if not isinstance(rows, torch.Tensor) or rows.dtype != torch.int64:
-                    raise SchemeError("ctx.%s: rows must be an int64 tensor" % tier)
-                if t.dim() == 0:
-                    raise SchemeError("ctx.%s: %r is a scalar; read it with rows=None" % (tier, name))
-                if rows.numel() and (int(rows.min()) < 0 or int(rows.max()) >= t.shape[0]):
-                    raise SchemeError("ctx.%s: row out of range" % tier)
+                self.tier_rows(t, rows, tier)
                 out, index, count = t[rows], rows, rows.numel()
-            self.kernel()
-            if tier == "hbm":
-                self.cursor = self.device.hbm_read(self.cursor, count * unit)
-            else:
-                C = self.device.C
-                if index is None:
-                    per = {c: (count // C + (1 if c < count % C else 0)) * unit for c in range(min(C, count))}
-                else:
-                    per = {c: int(v) * unit for c, v in enumerate(torch.bincount(index.reshape(-1) % C, minlength=C).tolist()) if v}
-                self.cursor = self.device.sram_read(self.cursor, per)
+            self.tier_bill(tier, count, unit, index)
         return out
+
+    def write_tier(self, tier, name, rows, values):
+        import torch
+        what = tier + "_write"
+        with self.meter.off():
+            t, unit = self.tier_tensor(tier, name, what)
+            if not isinstance(values, torch.Tensor) or values.dtype != t.dtype:
+                raise SchemeError("ctx.%s: values must be a %s tensor (the dtype layout placed)" % (what, t.dtype))
+            if rows is None:
+                if values.shape != t.shape:
+                    raise SchemeError("ctx.%s: values must have the tensor's shape %s" % (what, list(t.shape)))
+                t.copy_(values)
+                index, count = None, t.shape[0] if t.dim() else 1
+            else:
+                self.tier_rows(t, rows, what)
+                if rows.dim() != 1:
+                    raise SchemeError("ctx.%s: rows must be one-dimensional" % what)
+                if values.shape != (rows.shape[0], *t.shape[1:]):
+                    raise SchemeError("ctx.%s: values must be [len(rows), %s]" % (what, ", ".join(map(str, t.shape[1:]))))
+                if rows.numel() != torch.unique(rows).numel():
+                    raise SchemeError("ctx.%s: rows must be distinct" % what)
+                t[rows] = values
+                index, count = rows, rows.numel()
+            self.written[tier] += count * unit
+            self.tier_bill(tier, count, unit, index)
+        return None
 
     def finish(self, qids, ids):
         import torch
@@ -299,4 +340,5 @@ class Session:
     def summary(self):
         return {"arrive": self.arrive_t, "finish": self.finish_t, "results": self.results, "end": self.cursor,
                 "steps": self.steps, "step_us": self.table["step_us"], "compute_us": self.meter.time, "ctx_us": self.ctx_us, "ops": dict(self.meter.counts),
-                "max_state": self.max_state}
+                "max_state": self.max_state,
+                "hbm_written": self.written["hbm"], "sram_written": self.written["sram"]}

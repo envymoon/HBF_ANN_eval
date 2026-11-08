@@ -22,7 +22,8 @@ from .scoring import SPEEDUP_LEVEL, area, bounds, speedup
 from .sim import Session, TimeLimit
 from .tasks import LEVELS, clients, draw_weather, query_order, total_queries
 
-EVALUATOR = "hbf_ann.runner.v3"  # buffer hits take the base-die SRAM access time
+EVALUATOR = "hbf_ann.runner.v4"  # v4: serve may rewrite HBM / SRAM rows (ctx.hbm_write, ctx.sram_write)
+# v3: buffer hits take the base-die SRAM access time
 # The build stage's own version: it is part of the cache key and of the build's random stream. Bump it only when build's
 # inputs or semantics change.
 BUILD_VERSION = "hbf_ann.runner.v1"
@@ -277,6 +278,7 @@ def measure(out, truth, k, device, weather, clients):
             "wake_share": round(out["steps"] * out["step_us"] / total_span, 4),
             "steps": out["steps"], "syncs": out["ops"].get("sync", 0), "kernels": out["ops"].get("kernel", 0),
             "hbm_bytes_per_query": round(st["hbm_bytes"] / q, 1), "sram_bytes_per_query": round(st["sram_bytes"] / q, 1),
+            "hbm_written_per_query": round(out.get("hbm_written", 0) / q, 1), "sram_written_per_query": round(out.get("sram_written", 0) / q, 1),
             "max_state": out["max_state"], "hottest_block_reads": st["hottest_block_reads"],
             "coredie_rho": round(st["coredie_rho"], 3), "coredie_util": round(st["coredie_util"], 4),
             "power_wait_share": round(st["power_wait_us"] / max(senses, 1) / max(weather["tR"], 1e-9), 4),

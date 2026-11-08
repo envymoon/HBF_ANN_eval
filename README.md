@@ -206,6 +206,10 @@ Ask of each part of your idea: *is it computed once, or per query?* Once: `build
 Per query: `serve`. A "table in HBM" is built in `build`, placed in `layout` under `plan["hbm"]`, read in `serve` with `ctx.hbm`.
 A "better page layout" is a `layout` decision (the order of records in `plan["pages"]`, and `plan["interleave"]`).
 A "prefetch / speculate / batch" idea is a `serve` decision (which `ctx.submit` calls, with `batch=True` or not, and `ctx.wait`).
+A "cache filled while serving" (hot pages promoted to HBM, a prefetch table learned online) is a `layout` + `serve` decision:
+`layout` reserves the space (for example an all-zero tensor in `plan["hbm"]`), `serve` fills it with `ctx.hbm_write` /
+`ctx.sram_write`. A write is billed like reading the same rows; sizes stay as `layout` placed them, and every effort level
+starts again from `layout`'s contents.
 
 `serve` has no access to `vectors` or `index`: it sees only what `layout` placed, and every read goes through `ctx`
 (HBF reads cost device time; HBM and SRAM reads cost their bandwidth and latency). That is the constraint that makes the
@@ -294,7 +298,7 @@ tests/     reference/                           tests; the scores the reference 
 
 The framework is still under development. These are known limits of the current version, not design choices; they are planned work.
 
-- **No dynamic updates.** The index is built once and read-only: no insertion, deletion or rebuild during serving, and writes are not simulated.
+- **No dynamic updates.** The index is built once: no insertion, deletion or rebuild during serving, and HBF writes are not simulated. (HBM and SRAM rows placed by `layout` can be rewritten during serving, e.g. as a cache.)
 - **One platform: GPU + HBM + HBF.** No host CPU computation, no host memory or SSD tier, no multiple GPUs or network. Designs that depend on these cannot be expressed.
 - **GPU computation is billed from tensor shapes.** Custom CUDA kernels, operator fusion and other low-level optimisations can be neither expressed nor measured.
 - **The score covers throughput and latency only.** Build time, preprocessing, index size, update performance and tail recall do not affect it.

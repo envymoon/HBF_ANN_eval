@@ -29,6 +29,10 @@ ctx in serve:
         completions arrive in later events. A read is 64 B to 4 KiB, 64 B aligned, inside one 4 KiB page, and still senses the whole page.
         batch=True is the Batch Read hint: dispatched at once instead of waiting for the base-die timer.
   ctx.hbm(name, rows=None) / ctx.sram(name, rows=None)  rows of a tensor layout placed there (int64 row ids, any shape); waits for the data.
+  ctx.hbm_write(name, rows, values) / ctx.sram_write(name, rows, values)  overwrite rows of a tensor layout placed there (rows int64[r],
+        distinct, or None for all; values of its dtype, [r, *row shape]); billed like reading the same rows. Writes last for the run
+        (all efforts start from layout's contents); tensors keep the size and shape layout gave them, so reserve space in layout
+        (e.g. an empty cache) to fill online: hot-page caches, promotion, learned prefetch tables, per-run statistics.
   ctx.finish(qids, ids)   answer queries, ids int64[len(qids), k]; each client sends its next query immediately.
   ctx.wait(count=1, timeout_us=inf)  after this call returns, wake when count events wait, or after timeout_us, or when nothing is in flight.
   ctx.mapping(pages) -> int64[r, 3] channel, die, bank;  ctx.pending() -> int64 tags in flight;  ctx.now() -> simulated microseconds;

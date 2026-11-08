@@ -83,6 +83,16 @@ class ServeCtx:
         """Rows of a scratchpad tensor placed by layout (row r lives on channel r mod channels); waits for the data."""
         return self._s.read_tier("sram", name, rows)
 
+    def hbm_write(self, name, rows, values):
+        """Overwrite rows of an HBM tensor placed by layout (rows=None: all of it) with values of its dtype and row shape;
+        rows distinct. Billed as a transfer of the same bytes over the HBM link. The size and shape stay as layout placed."""
+        return self._s.write_tier("hbm", name, rows, values)
+
+    def sram_write(self, name, rows, values):
+        """Overwrite rows of a scratchpad tensor placed by layout (row r lives on channel r mod channels); billed on the
+        channel links like a read of the same rows."""
+        return self._s.write_tier("sram", name, rows, values)
+
     def finish(self, qids, ids):
         """Answer queries: ids int64[len(qids), k]. Each answered client sends its next query at once."""
         return self._s.finish(qids, ids)
