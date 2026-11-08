@@ -210,6 +210,10 @@ A "cache filled while serving" (hot pages promoted to HBM, a prefetch table lear
 `layout` reserves the space (for example an all-zero tensor in `plan["hbm"]`), `serve` fills it with `ctx.hbm_write` /
 `ctx.sram_write`. A write is billed like reading the same rows; sizes stay as `layout` placed them, and every effort level
 starts again from `layout`'s contents.
+Per-query control flow (a priority queue, a beam width or an early exit that differs per query) can be written directly
+inside `for i in ctx.lanes(n):`. Each lane runs as one thread block on one SM, so a branch on a tensor value inside a lane
+stays on the GPU and is far cheaper than a host sync. The phase is billed so that the lanes together never beat the whole
+GPU and one lane never beats one SM; heavy arithmetic is still best written as batched tensor code.
 
 `serve` has no access to `vectors` or `index`: it sees only what `layout` placed, and every read goes through `ctx`
 (HBF reads cost device time; HBM and SRAM reads cost their bandwidth and latency). That is the constraint that makes the

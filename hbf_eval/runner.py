@@ -22,7 +22,8 @@ from .scoring import SPEEDUP_LEVEL, area, bounds, speedup
 from .sim import Session, TimeLimit
 from .tasks import LEVELS, clients, draw_weather, query_order, total_queries
 
-EVALUATOR = "hbf_ann.runner.v4"  # v4: serve may rewrite HBM / SRAM rows (ctx.hbm_write, ctx.sram_write)
+EVALUATOR = "hbf_ann.runner.v4"  # v4: serve may rewrite HBM / SRAM rows (ctx.hbm_write, ctx.sram_write) and run
+# per-lane control flow on the GPU (ctx.lanes)
 # v3: buffer hits take the base-die SRAM access time
 # The build stage's own version: it is part of the cache key and of the build's random stream. Bump it only when build's
 # inputs or semantics change.
@@ -276,7 +277,8 @@ def measure(out, truth, k, device, weather, clients):
             "busiest_unit_util": round(st["busiest_unit_util"], 4), "unit_util": round(st["unit_util"], 4),
             "channel_util": round(st["channel_util"], 4), "compute_share": round((out["compute_us"] + out["ctx_us"]) / total_span, 4),
             "wake_share": round(out["steps"] * out["step_us"] / total_span, 4),
-            "steps": out["steps"], "syncs": out["ops"].get("sync", 0), "kernels": out["ops"].get("kernel", 0),
+            "steps": out["steps"], "syncs": out["ops"].get("sync", 0), "lane_syncs": out["ops"].get("lane_sync", 0),
+            "lane_phases": out.get("lane_phases", 0), "lanes_per_phase": round(out.get("lanes", 0) / max(out.get("lane_phases", 0), 1), 2), "kernels": out["ops"].get("kernel", 0),
             "hbm_bytes_per_query": round(st["hbm_bytes"] / q, 1), "sram_bytes_per_query": round(st["sram_bytes"] / q, 1),
             "hbm_written_per_query": round(out.get("hbm_written", 0) / q, 1), "sram_written_per_query": round(out.get("sram_written", 0) / q, 1),
             "max_state": out["max_state"], "hottest_block_reads": st["hottest_block_reads"],

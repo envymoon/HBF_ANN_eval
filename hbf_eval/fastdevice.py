@@ -127,6 +127,7 @@ class CDevice:
         if self.lib is None:
             raise RuntimeError("the C device model is not available")
         self.C, self.U, self.g = int(channels), int(units), int(interleave)
+        self.bw, self.hbm_bw, self.hbm_latency, self.sram_latency = float(channel_bw), float(hbm_bw), float(hbm_latency), float(sram_latency)
         self.banks = int(banks_per_die)
         self.dies = self.U // self.banks
         ip = np.array([self.C, self.U, POLICIES.index(policy), int(mocs), self.g, int(pages_per_block), self.banks,

@@ -33,6 +33,15 @@ ctx in serve:
         distinct, or None for all; values of its dtype, [r, *row shape]); billed like reading the same rows. Writes last for the run
         (all efforts start from layout's contents); tensors keep the size and shape layout gave them, so reserve space in layout
         (e.g. an empty cache) to fill online: hot-page caches, promotion, learned prefetch tables, per-run statistics.
+  for i in ctx.lanes(n):  per-lane code (n <= 65536, e.g. one lane per open query). Lanes run in parallel inside the wake's kernel,
+        each as one thread block on one SM: inside a lane a branch on a tensor value (.item(), bool(), int(), .tolist()) stays on
+        the GPU and costs about 1/25 of a sync outside, so priority queues, per-query beam widths, early exit and other per-query
+        control flow can be written directly instead of as masked batches. The phase lasts
+        lane_phase_us + max(sum of the lanes' compute, max over lanes of (24 x its compute + its branches + its HBM/SRAM waits)):
+        the lanes together never beat the whole GPU, one lane never beats one SM, and HBM/SRAM traffic of all lanes shares the links.
+        ctx.submit and ctx.finish inside a lane take effect at the lane's own time when the loop ends; ctx.debt, ctx.refresh and
+        nested lanes are not allowed inside; the loop must run to its end (no break or return inside it).
+        Batched code is still best for heavy arithmetic; lanes pay off when control flow differs per query.
   ctx.finish(qids, ids)   answer queries, ids int64[len(qids), k]; each client sends its next query immediately.
   ctx.wait(count=1, timeout_us=inf)  after this call returns, wake when count events wait, or after timeout_us, or when nothing is in flight.
   ctx.mapping(pages) -> int64[r, 3] channel, die, bank;  ctx.pending() -> int64 tags in flight;  ctx.now() -> simulated microseconds;

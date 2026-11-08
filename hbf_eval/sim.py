@@ -9,12 +9,13 @@ import time
 
 import numpy as np
 
-from .compute_table import TABLE, Meter
+from .compute_table import TABLE, Meter, lane_table
 from .ctx import SchemeError, ServeCtx, _int_tensor
 from .device import ALIGN, PAGE, DeviceError
 
 HBM_SECTOR, SRAM_SECTOR = 32, 64
 MAX_PER_CALL, MAX_OUTSTANDING = 1 << 20, 1 << 21
+MAX_LANES = 1 << 16
 IDLE_STEPS = 1000  # consecutive wakes with nothing in flight and nothing delivered before we call it a deadlock
 
 
@@ -63,6 +64,97 @@ def state_bytes(x, seen, depth=0):
     raise SchemeError("state may hold tensors, numbers, short strings, lists, tuples and dicts, not " + type(x).__name__)
 
 
+def copy_arg(x):
+    import torch
+    return x.clone() if isinstance(x, torch.Tensor) else x
+
+
+class Lanes:
+    """One ctx.lanes(n) loop: n lanes, each one thread block on one SM, run in parallel inside the wake's fused kernel.
+
+    Lane i's code runs between the loop handing out i and i + 1. Its torch calls are billed as usual (at the whole GPU's
+    rate), but a value read back (a branch) costs lane_sync_us and its bytes move at one SM's share of on-chip bandwidth,
+    not the host link: the branch stays on the GPU. When the loop ends the phase takes
+        lane_phase_us + max(sum of the lanes' compute, max over lanes of (lane_sms x its compute + its branches + its HBM/SRAM waits)),
+    so the lanes together never beat the GPU's throughput and one lane never beats one SM. HBM / SRAM traffic of all lanes
+    shares the links: the phase also lasts at least until that traffic is through. Reads submitted and queries finished
+    inside a lane take effect at the lane's own time when the phase ends (in time order)."""
+
+    def __init__(self, session, n):
+        self.s, self.n, self.i = session, n, -1
+        self.t0 = session.cursor
+        self.comp, self.lat = [0.] * n, [0.] * n
+        self.hbm, self.sram, self.ops = 0, {}, []
+        self.table = session.meter.table
+        session.meter.table = lane_table(self.table)
+        self.S = self.table["lane_sms"]
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.s.lane is not self:
+            raise SchemeError("a ctx.lanes loop can be iterated only once")
+        self.i += 1
+        if self.i >= self.n:
+            self.close()
+            raise StopIteration
+        return self.i
+
+    def now(self):
+        i = max(self.i, 0)
+        return self.t0 + (self.S * self.comp[i] + self.lat[i] if self.n else 0.)
+
+    def add(self, us, kind):
+        if self.i < 0 or self.i >= self.n:
+            raise SchemeError("work inside ctx.lanes(n) must be inside its loop")
+        if kind == "sync":
+            self.lat[self.i] += us
+            self.s.lane_syncs += 1
+        else:
+            self.comp[self.i] += us
+
+    def tier(self, tier, amount):
+        d = self.s.device
+        if tier == "hbm":
+            if amount <= 0:
+                return
+            if d.hbm_bw <= 0:
+                raise SchemeError("no HBM in this configuration")
+            self.hbm += amount
+            self.lat[self.i] += amount / d.hbm_bw + d.hbm_latency
+        else:
+            if not amount:
+                return
+            for c, b in amount.items():
+                self.sram[c] = self.sram.get(c, 0) + b
+            self.lat[self.i] += max(amount.values()) / d.bw + d.sram_latency
+
+    def defer(self, fn, args):
+        self.ops.append((self.now(), len(self.ops), fn, args))
+        return None
+
+    def close(self):
+        s = self.s
+        s.meter.table = self.table
+        s.lane = None
+        s.lane_phases += 1
+        s.lane_count += self.n
+        if not self.n:
+            return
+        span = max(sum(self.comp), max(self.S * c + l for c, l in zip(self.comp, self.lat)))
+        end = self.t0 + self.table["lane_phase_us"] + span
+        with s.meter.off():
+            if self.hbm:
+                end = max(end, s.device.hbm_read(self.t0, self.hbm))
+            if self.sram:
+                end = max(end, s.device.sram_read(self.t0, self.sram))
+            for t, _, fn, args in sorted(self.ops, key=lambda o: (o[0], o[1])):
+                s.cursor = t
+                fn(*args)
+        s.cursor = end
+
+
 class Session:
     def __init__(self, *, device, plan, queries, k, n, clients, spec, knobs, effort, generator, state_cap,
                  deadline=math.inf, table=TABLE):
@@ -84,15 +176,39 @@ class Session:
         self.results = [None] * self.total
         self.issued = 0
         self.ctx_us, self.steps, self.max_state = 0., 0, 0
+        self.lane, self.lane_phases, self.lane_count, self.lane_syncs = None, 0, 0, 0
 
     # ---- billing ----
     def charge(self, us):
-        self.cursor += us
+        """Called by the meter for each billed torch call (meter.kind says which kind)."""
+        if self.lane is not None:
+            self.lane.add(us, self.meter.kind)
+        else:
+            self.cursor += us
 
     def kernel(self, us=0.):
         us += self.table["launch_us"]
-        self.cursor += us
+        if self.lane is not None:
+            self.lane.add(us, "kernel")
+        else:
+            self.cursor += us
         self.ctx_us += us
+
+    # ---- ctx.lanes: per-lane control flow inside the fused kernel ----
+    def lanes(self, n):
+        if self.lane is not None:
+            raise SchemeError("ctx.lanes cannot be nested")
+        if not isinstance(n, int) or isinstance(n, bool) or not 0 <= n <= MAX_LANES:
+            raise SchemeError("ctx.lanes(n): n is an int in [0, %d]" % MAX_LANES)
+        self.lane = Lanes(self, n)
+        return self.lane
+
+    def lane_now(self):
+        return self.cursor if self.lane is None else self.lane.now()
+
+    def no_lane(self, what):
+        if self.lane is not None:
+            raise SchemeError("ctx.%s cannot be called inside ctx.lanes" % what)
 
     def check_time(self):
         if time.monotonic() > self.deadline:
@@ -107,6 +223,11 @@ class Session:
         return out
 
     def submit(self, pages, offsets, nbytes, tags, batch):
+        if self.lane is not None:
+            return self.lane.defer(self.submit_now, (copy_arg(pages), copy_arg(offsets), copy_arg(nbytes), copy_arg(tags), batch))
+        return self.submit_now(pages, offsets, nbytes, tags, batch)
+
+    def submit_now(self, pages, offsets, nbytes, tags, batch):
         import torch
         with self.meter.off():
             pages, offsets, tags = (_int_tensor(x, n) for x, n in ((pages, "pages"), (offsets, "offsets"), (tags, "tags")))
@@ -157,6 +278,8 @@ class Session:
         import torch
         self.kernel()
         if tier == "hbm":
+            if self.lane is not None:
+                return self.lane.tier("hbm", count * unit)
             self.cursor = self.device.hbm_read(self.cursor, count * unit)
         else:
             C = self.device.C
@@ -164,6 +287,8 @@ class Session:
                 per = {c: (count // C + (1 if c < count % C else 0)) * unit for c in range(min(C, count))}
             else:
                 per = {c: int(v) * unit for c, v in enumerate(torch.bincount(index.reshape(-1) % C, minlength=C).tolist()) if v}
+            if self.lane is not None:
+                return self.lane.tier("sram", per)
             self.cursor = self.device.sram_read(self.cursor, per)
 
     def read_tier(self, tier, name, rows):
@@ -205,6 +330,11 @@ class Session:
         return None
 
     def finish(self, qids, ids):
+        if self.lane is not None:
+            return self.lane.defer(self.finish_now, (copy_arg(qids), copy_arg(ids)))
+        return self.finish_now(qids, ids)
+
+    def finish_now(self, qids, ids):
         import torch
         with self.meter.off():
             qids = _int_tensor(qids, "qids")
@@ -252,6 +382,7 @@ class Session:
 
     def debt(self):
         import torch
+        self.no_lane("debt")
         with self.meter.off():
             self.kernel()  # a register read (OCP §11.5: the host may query the block read counts)
             out = torch.tensor(self.device.debt_per_die(self.cursor), dtype=torch.float64)
@@ -259,6 +390,7 @@ class Session:
 
     def refresh(self, dies, counts):
         import torch
+        self.no_lane("refresh")
         with self.meter.off():
             dies = _int_tensor(dies, "refresh: dies")
             if isinstance(counts, int) and not isinstance(counts, bool):
@@ -320,6 +452,8 @@ class Session:
             self.wait_count, self.wait_timeout = 1, math.inf
             with self.meter:
                 state = serve(state, ev, ctx)
+            if self.lane is not None:
+                raise SchemeError("a ctx.lanes loop must run to its end (no break or return inside it)")
             if not isinstance(state, dict):
                 raise SchemeError("serve must return its state as a dict")
             size = state_bytes(state, set())
@@ -339,6 +473,7 @@ class Session:
 
     def summary(self):
         return {"arrive": self.arrive_t, "finish": self.finish_t, "results": self.results, "end": self.cursor,
-                "steps": self.steps, "step_us": self.table["step_us"], "compute_us": self.meter.time, "ctx_us": self.ctx_us, "ops": dict(self.meter.counts),
+                "steps": self.steps, "step_us": self.table["step_us"], "compute_us": self.meter.time, "ctx_us": self.ctx_us, "ops": dict(self.meter.counts, sync=self.meter.counts["sync"] - self.lane_syncs, lane_sync=self.lane_syncs),
+                "lane_phases": self.lane_phases, "lanes": self.lane_count,
                 "max_state": self.max_state,
                 "hbm_written": self.written["hbm"], "sram_written": self.written["sram"]}

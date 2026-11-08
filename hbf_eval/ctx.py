@@ -65,7 +65,12 @@ class ServeCtx:
         return dict(self._s.spec)
 
     def now(self):
-        return self._s.cursor
+        return self._s.lane_now()
+
+    def lanes(self, n):
+        """for i in ctx.lanes(n): per-lane code. The lanes run in parallel (one thread block each); a branch on a tensor
+        value inside a lane stays on the GPU (cheap), unlike one outside. The loop must run to its end."""
+        return self._s.lanes(n)
 
     def uniform(self, *shape):
         return self._s.uniform(shape)

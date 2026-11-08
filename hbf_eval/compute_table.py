@@ -32,9 +32,20 @@ TABLE = {  # on-chip billing: the default table
     "flops_per_us": 7.5e6,  # 7.5 TFLOPS
     "bytes_per_us": 1.0e7,  # 10 TB/s: operands are working state and data already brought in through ctx (on chip)
     "host_bytes_per_us": 1.6e4,  # 16 GB/s, PCIe 4.0 x8: bytes of a value read back to the host
+    # ctx.lanes: a lane is one thread block on one SM, so its branches stay on the GPU
+    "lane_sms": 24,  # SMs of the 4060: one lane runs at 1/24 of the GPU's compute and on-chip bandwidth
+    "lane_sync_us": .02,  # a data-dependent branch inside a block, ~30 cycles
+    "lane_phase_us": .6,  # one grid barrier into and out of the per-lane phase (half a step: step_us is two grid syncs)
 }
 DEFAULT = "onchip"
 TABLES = {"onchip": TABLE, "graph": GRAPH, "eager": dict(GRAPH, launch_us=2.)}
+for _t in (GRAPH, TABLES["eager"]):
+    _t.update(lane_sms=24, lane_sync_us=.02, lane_phase_us=.6)
+
+
+def lane_table(table):
+    """The billing inside ctx.lanes: a branch costs lane_sync_us and its bytes move at one SM's share of on-chip bandwidth."""
+    return dict(table, sync_us=table["lane_sync_us"], host_bytes_per_us=table["bytes_per_us"] / table["lane_sms"])
 
 FREE = {"__get__", "size", "dim", "ndimension", "numel", "nelement", "stride", "element_size", "is_contiguous",
         "is_floating_point", "is_complex", "storage_offset", "__len__", "dtype", "shape", "device", "requires_grad",
@@ -167,6 +178,7 @@ class Meter:
                     return out
                 us, kind = cost(getattr(func, "__name__", ""), args, kwargs, out, meter.table)
                 if us:
+                    meter.kind = kind
                     meter.charge(us)
                     meter.time += us
                 meter.counts[kind] += 1
@@ -177,6 +189,7 @@ class Meter:
 
         self.mode, self.charge, self.table, self.check, self.every = Mode(), charge, table, check, every
         self.paused, self.time, self.calls, self.counts = 0, 0., 0, {"free": 0, "sync": 0, "kernel": 0}
+        self.kind = "kernel"  # the kind of the call being charged (ctx.lanes bills syncs and kernels apart)
 
     def __enter__(self):
         self.mode.__enter__()
