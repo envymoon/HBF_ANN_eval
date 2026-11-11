@@ -226,18 +226,24 @@ Think of the idea in three stages, which are the three entry functions:
 | Place it | `layout(index, vectors, ctx) -> plan` | which bytes go to HBF pages, HBM, or per-channel SRAM, and how pages interleave over channels | no |
 | Answer queries | `serve(state, events, ctx) -> state` | what to read now, what to compute with what came back, when to answer | **yes** |
 
-Ask of each part of your idea: *is it computed once, or per query?* Once: `build` (or `layout` if it is a placement decision).
-Per query: `serve`. A "table in HBM" is built in `build`, placed in `layout` under `plan["hbm"]`, read in `serve` with `ctx.hbm`.
-A "better page layout" is a `layout` decision (the order of records in `plan["pages"]`, and `plan["interleave"]`).
-A "prefetch / speculate / batch" idea is a `serve` decision (which `ctx.submit` calls, with `batch=True` or not, and `ctx.wait`).
-A "cache filled while serving" (hot pages promoted to HBM, a prefetch table learned online) is a `layout` + `serve` decision:
-`layout` reserves the space (for example an all-zero tensor in `plan["hbm"]`), `serve` fills it with `ctx.hbm_write` /
-`ctx.sram_write`. A write is billed like reading the same rows; sizes stay as `layout` placed them, and every effort level
-starts again from `layout`'s contents.
-Per-query control flow (a priority queue, a beam width or an early exit that differs per query) can be written directly
-inside `for i in ctx.lanes(n):`. Each lane runs as one thread block on one SM, so a branch on a tensor value inside a lane
-stays on the GPU and is far cheaper than a host sync. The phase is billed so that the lanes together never beat the whole
-GPU and one lane never beats one SM; heavy arithmetic is still best written as batched tensor code.
+For each part of your idea, ask: **is it computed once, or per query?** Once goes in `build` (or in `layout` if it is a
+placement decision); per query goes in `serve`. Common kinds of idea map like this:
+
+| Kind of idea | Where it goes | What you write |
+|---|---|---|
+| A table in HBM (codes, centroids, entry points) | `build` + `layout` + `serve` | compute it in `build`, put it under `plan["hbm"]` in `layout`, read it in `serve` with `ctx.hbm(name, rows)` |
+| A better page layout | `layout` | the order of records in `plan["pages"]`, and `plan["interleave"]` |
+| Prefetch, speculation, batching of reads | `serve` | which `ctx.submit` calls you make and when, `batch=True` or not, and `ctx.wait` |
+| A cache filled while serving (hot pages promoted to HBM, a prefetch table learned online) | `layout` + `serve` | `layout` reserves the space (for example an all-zero tensor in `plan["hbm"]`); `serve` fills it with `ctx.hbm_write` / `ctx.sram_write` |
+| Per-query control flow (a priority queue, a beam width or an early exit that differs per query) | `serve` | write it inside `for i in ctx.lanes(n):` |
+
+Notes on the last two rows:
+
+- A write is billed like reading the same rows. Sizes stay as `layout` placed them, and every effort level starts again from
+  `layout`'s contents.
+- Each lane runs as one thread block on one SM, so a branch on a tensor value inside a lane stays on the GPU and is far
+  cheaper than a host sync. The lanes together never beat the whole GPU and one lane never beats one SM; heavy arithmetic is
+  still best written as batched tensor code.
 
 `serve` has no access to `vectors` or `index`: it sees only what `layout` placed, and every read goes through `ctx`
 (HBF reads cost device time; HBM and SRAM reads cost their bandwidth and latency). That is the constraint that makes the
