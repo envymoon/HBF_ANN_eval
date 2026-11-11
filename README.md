@@ -8,6 +8,8 @@ alternative (a batched brute-force scan), at fixed recall.
 It exists because the HBF simulator published with the HBF literature needs a specific NVIDIA GPU and runs LLM workloads, not
 ANN search. Nothing here needs a GPU: the platform is simulated and the scheme's GPU work is *billed* from tensor shapes.
 
+**Manual:** [envymoon.github.io/HBF_ANN_eval](https://envymoon.github.io/HBF_ANN_eval/) (source: `docs/index.html`) lists everything `build`, `layout` and `serve` receive and may return, every `ctx` method with its cost and limits, and a table of which designs the evaluator can and cannot express.
+
 ## Score
 
 For each task: `speedup = log2(throughput of the scheme at recall@10 = R / throughput of batched brute force on the same device)`.
