@@ -67,3 +67,26 @@ class Evaluate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InFlightCap(unittest.TestCase):
+    """An effort whose reads overflow the in-flight cap ends the sweep; the points below it stand."""
+    def test_cap_keeps_lower_points(self):
+        real = runner.Session
+
+        def capped_session(**kw):
+            s = real(**kw)
+            if kw["effort"] > .4:
+                def boom(serve):
+                    raise runner.SchemeError("submit: " + runner.CAP_ERROR)
+                s.run = boom
+            return s
+        runner.Session = capped_session
+        try:
+            rec = run(dict(SCALE, levels=[.9, .95, .9999], refine=0))
+        finally:
+            runner.Session = real
+        self.assertIsNone(rec["failure"])
+        self.assertEqual(rec["capped_at"], .5)
+        self.assertTrue(all(c[0] <= .4 for c in rec["curve"]))
+        self.assertIn("speedups", rec)

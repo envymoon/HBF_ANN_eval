@@ -152,7 +152,8 @@ varies between machines), `index_bytes`, `hbf_bytes`, `hbm_bytes`, `sram_bytes`,
 `hbf_over_data`. The diagnostics add `p50_over_hbf_floor` (median latency in units of one HBF read, the fastest possible query),
 `p50_over_hbm_floor` (in units of one HBM access) and `read_rounds_per_query` (dependent HBF read rounds per query, measured with
 one client: a graph walk has about one per hop, a cluster scan one or two). `tail_failed` counts operating points dropped by the
-tail-recall floor.
+tail-recall floor. If a higher effort overflows the evaluator's cap on reads in flight (2^21), the sweep stops there: the points below it
+still count, a level not yet reached scores as not reached, and the task record carries `capped_at` (that effort).
 
 If your idea trades preprocessing for query speed (a better layout that takes a long time to compute), the score shows only the query-side gain.
 

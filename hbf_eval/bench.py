@@ -93,7 +93,7 @@ def job(name, data, scale_name, cache, wide=False, data_root=None, sets=None, me
         rec = runner.evaluate(sch, knobs, t, SEED, {"scale": scale, "data_root": data_root, "cache": cache},
                               time.monotonic() + TIME_LIMIT[scale_name], space)
         keep = {k: rec.get(k) for k in ("task", "failure", "norm", "speedups", "final", "curve", "bounds", "profile", "seconds",
-                                         "cost", "tail_failed")}
+                                         "cost", "tail_failed", "capped_at")}
         keep["diag"] = {k: rec["diag"].get(k) for k in ("recall", "qps", "p50_us", "reads_per_query", "senses_per_query", "hit_rate",
                                                         "compute_share", "wake_share", "unit_util", "power_wait_share",
                                                         "recall_worst5", "read_rounds_per_query", "p50_over_hbf_floor",

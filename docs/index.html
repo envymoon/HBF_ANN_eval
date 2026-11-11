@@ -1122,6 +1122,7 @@ the <code>ctx</code> methods above and torch operations.</div>
 <ul>
   <li>Per task: log2(your throughput at recall@10 = 0.90 ÷ batched brute force's on the same device). 0 = as fast as the scan, +1 = twice as fast.</li>
   <li>An operating point counts only if its worst 5% of queries average recall ≥ 0.3.</li>
+  <li>If raising the effort makes the reads in flight overflow the evaluator's cap (2<sup>21</sup> outstanding reads), the sweep stops there: the points measured below that effort still count, a recall level not yet reached scores as not reached, and the task record carries <code>capped_at</code> (the effort that overflowed).</li>
   <li>Never reaching 0.90 scores between −16 and −8, by how close you get.</li>
   <li>The score is the mean over the four tasks; 0.95 and 0.99 are reported too. Build time, index size and the diagnostics are reported, not scored.</li>
 </ul>

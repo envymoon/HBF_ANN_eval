@@ -25,6 +25,7 @@ from .scoring import SPEEDUP_LEVEL, area, bounds, speedup
 from .sim import Session, TimeLimit
 from .tasks import LEVELS, clients, draw_weather, query_order, total_queries
 
+CAP_ERROR = "too many reads in flight"
 EVALUATOR = "hbf_ann.runner.v5"  # v5: tail-recall floor, effort bisection at each recall level, graded floor;
 # report: offline cost (build / layout seconds, index / HBF / HBM / SRAM bytes), latency ratios, dependent HBF read rounds
 # v4: serve may rewrite HBM / SRAM rows (ctx.hbm_write, ctx.sram_write) and run per-lane control flow on the GPU (ctx.lanes)
@@ -236,9 +237,24 @@ def evaluate(scheme, knobs, task, seed, job, deadline, space=None):
         # the speedup score reads the curve at 0.9 (or at each of scale["levels"]); the full suite up to LEVELS[-1]
         targets = sorted(scale["levels"]) if compact and scale.get("levels") else [SPEEDUP_LEVEL if compact else LEVELS[-1]]
         ok = lambda row, level: row["recall"] >= level and tail_ok(row, tail)
+        # An effort whose reads overflow the in-flight cap ends the sweep: the scheme cannot go higher, the points below it
+        # stand, and a level it had not reached scores as not reached (record["capped_at"] names that effort).
+        capped = None
+
+        def run_or_cap(effort):
+            nonlocal capped
+            try:
+                return run_at(effort)
+            except SchemeError as e:
+                if CAP_ERROR not in str(e) or not points:
+                    raise
+                capped = effort if capped is None else min(capped, effort)
+                return None
+
         for i in range(efforts):
             effort = i / (efforts - 1) if efforts > 1 else 1.
-            if ok(run_at(effort), targets[-1]):
+            row = run_or_cap(effort)
+            if row is None or ok(row, targets[-1]):
                 break
         # bisect the effort interval that crosses each level, so the crossing is read from nearby points instead of
         # interpolated across a whole effort step
@@ -248,7 +264,8 @@ def evaluate(scheme, knobs, task, seed, job, deadline, space=None):
                 good = [e for e, r in zip(point_efforts, points) if ok(r, level) and (not fail or e > max(fail))]
                 if not fail or not good:
                     break
-                run_at((max(fail) + min(good)) / 2)
+                if run_or_cap((max(fail) + min(good)) / 2) is None:
+                    break
         curve.sort(key=lambda c: c[0])
         for row in points:
             if diag_at is None or abs(row["recall"] - .95) < abs(diag_at["recall"] - .95):
@@ -281,6 +298,8 @@ def evaluate(scheme, knobs, task, seed, job, deadline, space=None):
         if tail is not None:
             record["tail_floor"] = tail
             record["tail_failed"] = sum(not tail_ok(p, tail) for p in points)  # operating points dropped by the floor
+        if capped is not None:
+            record["capped_at"] = round(capped, 4)  # first effort whose reads overflowed the in-flight cap
         norm, levels = area(pts, lo, hi)
         if compact:
             record["area"] = round(norm, 6)
