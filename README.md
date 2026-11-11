@@ -100,6 +100,7 @@ python3 -m hbf_eval.bench compare results/results.jsonl reference/results_100k.j
 | `--out DIR` | results (`results.jsonl`, `driver.log`, one `stderr_*.log` per job) | `results/` |
 | `--cache DIR` | built indexes and layouts, keyed by the code and knobs they depend on, so a rerun that changes only `serve` does not rebuild | `cache/` |
 | `--data-root DIR` | real datasets instead of the synthetic stand-ins | synthetic |
+| `--levels 0.9,0.95` | recall levels to measure and score (a subset of 0.9, 0.95, 0.99); the effort sweep stops once the highest is reached, so dropping 0.99 also saves time. Labelled `scheme@upto0.95` | 0.9,0.95,0.99 |
 | `--fixed-device A\|B\|C\|D` | fixed device instead of a per-seed draw: the firmware details take one value inside each range (`FIXED_FIRMWARE` in `tasks.py`: lru, 1 us timer, 2048 in flight, 1 MiB SRAM per channel, read-disturb threshold 3e5, HBM factor 0.3), tR has no jitter, and every task runs on this product profile except `power_bound`, which keeps C | per-seed draw |
 
 **Resources.** Each process uses one CPU thread for torch (fixed) and runs its four tasks one after the other, so wall time is

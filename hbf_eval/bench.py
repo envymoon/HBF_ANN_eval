@@ -60,12 +60,22 @@ def parse_sets(items):
     return out
 
 
-def tag(name, wide, sets, device=None):
+def parse_levels(text):
+    """--levels 0.9,0.95: the recall levels to measure and score (a subset of 0.9, 0.95, 0.99); None keeps all three."""
+    if not text:
+        return None
+    levels = sorted(float(x) for x in text.split(","))
+    if not levels or any(lv not in LEVELS for lv in levels):
+        sys.exit("--levels takes a comma list drawn from %s, got %r" % (",".join("%g" % lv for lv in LEVELS), text))
+    return None if levels == LEVELS else levels
+
+
+def tag(name, wide, sets, device=None, levels=None):
     return (label_of(name) + ("@wide" if wide else "") + "".join("@%s=%g" % kv for kv in sorted(sets.items()))
-            + ("@fixed" + device if device else ""))
+            + ("@fixed" + device if device else "") + ("@upto%g" % levels[-1] if levels else ""))
 
 
-def job(name, data, scale_name, cache, wide=False, data_root=None, sets=None, mem_gb=None, device=None):
+def job(name, data, scale_name, cache, wide=False, data_root=None, sets=None, mem_gb=None, device=None, levels=None):
     limit = int(mem_gb * (1 << 30)) if mem_gb else ADDRESS_SPACE[scale_name]
     resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     import torch
@@ -78,9 +88,9 @@ def job(name, data, scale_name, cache, wide=False, data_root=None, sets=None, me
     if unknown:
         sys.exit("unknown knob(s) %s; declared: %s" % (unknown, sorted(sch.knobs)))
     over.update(sets or {})
-    label = tag(name, wide, sets or {}, device)
+    label = tag(name, wide, sets or {}, device, levels)
     knobs, space = sch.knob_values(over), sch.namespace()
-    scale = SCALES[scale_name]
+    scale = dict(SCALES[scale_name], levels=levels) if levels else SCALES[scale_name]
     base, _, mm = data.partition("_m")
     tasks = []
     for t in suite("main", scale):
@@ -158,26 +168,29 @@ def run(a):
     names = a.schemes.split(",") if a.schemes else ["baseline", *PUBLISHED]
     sets = parse_sets(a.set)
     a.fixed_device = getattr(a, "fixed_device", None)
+    a.levels = getattr(a, "levels", None)
+    lv = parse_levels(a.levels)
     from . import scheme
     for n in names:  # fail before any process starts: bad file, bad knob name
         known = scheme.load(find(n)).knobs
         if set(sets) - set(known):
             sys.exit("%s: unknown knob(s) %s; declared: %s" % (n, sorted(set(sets) - set(known)), sorted(known)))
-    todo = [(n, d, s) for s in a.scale.split(",") for d in a.data.split(",") for n in names if (tag(n, a.wide, sets, a.fixed_device), d, s) not in done]
+    todo = [(n, d, s) for s in a.scale.split(",") for d in a.data.split(",") for n in names if (tag(n, a.wide, sets, a.fixed_device, lv), d, s) not in done]
     procs, log = [], open(os.path.join(a.out, "driver.log"), "a")
     while todo or procs:
         while todo and len(procs) < a.workers:
             n, d, s = todo.pop(0)
-            err = open(os.path.join(a.out, "stderr_%s_%s_%s.log" % (tag(n, a.wide, sets, a.fixed_device), d, s)), "w")
+            err = open(os.path.join(a.out, "stderr_%s_%s_%s.log" % (tag(n, a.wide, sets, a.fixed_device, lv), d, s)), "w")
             cmd = [sys.executable, "-m", "hbf_eval.bench", "one", "--scheme", n, "--data", d, "--scale", s, "--cache", a.cache]
             cmd += ["--data-root", a.data_root] if a.data_root else []
             cmd += ["--mem-gb", str(a.mem_gb)] if a.mem_gb else []
             cmd += ["--fixed-device", a.fixed_device] if a.fixed_device else []
+            cmd += ["--levels", a.levels] if a.levels else []
             for item in a.set or []:
                 cmd += ["--set", item]
             p = subprocess.Popen(cmd + (["--wide"] if a.wide else []), cwd=ROOT, stdout=subprocess.PIPE, stderr=err, text=True)
             budget = int(a.rss_gb * (1 << 30)) if a.rss_gb else RESIDENT[s]
-            procs.append(((tag(n, a.wide, sets, a.fixed_device), d, s), p, time.time(), budget, {"peak": 0, "over": False}))
+            procs.append(((tag(n, a.wide, sets, a.fixed_device, lv), d, s), p, time.time(), budget, {"peak": 0, "over": False}))
             print(time.strftime("%F %T"), "start", *procs[-1][0], file=log, flush=True)
         time.sleep(1)
         for item in list(procs):
@@ -215,6 +228,8 @@ def table(rows):
             continue
         per = {"tasks": {t["task"]: t.get("speedups") for t in r["tasks"]}}
         for lv in LEVELS:
+            if any(t.get("speedups") and "%g" % lv not in t["speedups"] for t in r["tasks"]):
+                continue  # a level this run did not measure (--levels)
             vals = [t["speedups"]["%g" % lv] if t.get("speedups") else -8. for t in r["tasks"]]
             per["%g" % lv] = round(sum(vals) / 4, 3)
         out.setdefault("%s|%s" % (r["data"], r["scale"]), {})[r["label"]] = per
@@ -225,7 +240,7 @@ def report(a):
     for key, t in sorted(table(results(a.out)).items()):
         print("==", key)
         for l, v in sorted(t.items(), key=lambda x: -x[1]["0.9"]):
-            print("  %-16s  0.90 %7.3f  0.95 %7.3f  0.99 %7.3f" % (l, v["0.9"], v["0.95"], v["0.99"]))
+            print("  %-16s" % l + "".join("  %.2f %7.3f" % (lv, v["%g" % lv]) for lv in LEVELS if "%g" % lv in v))
 
 
 def compare(a):
@@ -265,10 +280,13 @@ def main():
     ap.add_argument("--fixed-device", choices=("A", "B", "C", "D"), default=None,
                     help="fixed device: firmware values of tasks.FIXED_FIRMWARE instead of a per-seed draw, no tR jitter, and this "
                          "product profile for every task that does not pin its own (power_bound keeps C)")
+    ap.add_argument("--levels", default=None, help="recall levels to measure and score, e.g. 0.9,0.95 (default: 0.9,0.95,0.99); "
+                    "the effort sweep stops once the highest one is reached")
     ap.add_argument("--data-root", default=None, help="folder of prepared datasets (see data.py); default: synthetic stand-ins")
     a = ap.parse_args()
     if a.cmd == "one":
-        print(json.dumps(job(a.scheme, a.data, a.scale, a.cache, a.wide, a.data_root, parse_sets(a.set), a.mem_gb, a.fixed_device)))
+        print(json.dumps(job(a.scheme, a.data, a.scale, a.cache, a.wide, a.data_root, parse_sets(a.set), a.mem_gb, a.fixed_device,
+                             parse_levels(a.levels))))
     elif a.cmd == "run":
         run(a)
     elif a.cmd == "list":
