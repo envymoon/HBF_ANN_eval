@@ -48,6 +48,10 @@ MOCS = (256, 16384)  # log-uniform
 SRAM = (0, 2 << 20)  # bytes per channel, in 64 KiB steps
 DISTURB = (1e5, 1e6)  # reads per block before a refresh, log-uniform 
 HBM_FRACTION = (.1, .5)
+# A fixed device (bench --fixed-device): one value inside each firmware range above instead of a per-seed draw, and no tR
+# jitter; the product profile is chosen by the caller (tasks that pin their own profile keep it).
+FIXED_FIRMWARE = {"policy": "lru", "tmr": 1., "mocs": 2048, "sram_per_channel": 1 << 20, "disturb_threshold": 3e5,
+                  "hbm_fraction": .3}
 HBM_STACK_BW = 1e6  # bytes/us (1 TB/s per stack, Characterizing HBF Table 1)
 HBM_LATENCY, SRAM_LATENCY = .1, .05  # us
 PAGES_PER_BLOCK = 256
@@ -90,6 +94,8 @@ def draw_weather(seed, spec, split, cpp):
     if "preset" in over:
         w = dict(PRESETS[over["preset"]], **NO_V2, profile=over["preset"], jitter=0.)
         return finish(w, cpp, int(spec.get("m", M_DEFAULT)))
+    if over.get("fixed"):
+        return profile_weather(profile_of(seed, spec), cpp, int(spec.get("m", M_DEFAULT)), jitter=0., **FIXED_FIRMWARE)
     return profile_weather(profile_of(seed, spec), cpp, int(spec.get("m", M_DEFAULT)), **firmware)
 
 

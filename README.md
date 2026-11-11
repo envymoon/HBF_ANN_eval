@@ -100,6 +100,7 @@ python3 -m hbf_eval.bench compare results/results.jsonl reference/results_100k.j
 | `--out DIR` | results (`results.jsonl`, `driver.log`, one `stderr_*.log` per job) | `results/` |
 | `--cache DIR` | built indexes and layouts, keyed by the code and knobs they depend on, so a rerun that changes only `serve` does not rebuild | `cache/` |
 | `--data-root DIR` | real datasets instead of the synthetic stand-ins | synthetic |
+| `--fixed-device A\|B\|C\|D` | fixed device instead of a per-seed draw: the firmware details take one value inside each range (`FIXED_FIRMWARE` in `tasks.py`: lru, 1 us timer, 2048 in flight, 1 MiB SRAM per channel, read-disturb threshold 3e5, HBM factor 0.3), tR has no jitter, and every task runs on this product profile except `power_bound`, which keeps C | per-seed draw |
 
 **Resources.** Each process uses one CPU thread for torch (fixed) and runs its four tasks one after the other, so wall time is
 set by the slowest scheme and total memory is at most `workers x mem-gb`. If your machine has less memory, lower `--workers`,
@@ -109,7 +110,8 @@ rather than being killed by the operating system's out-of-memory killer (exit 13
 kills anyway is recorded as "killed by the system ..., most likely out of memory" with the peak resident memory seen. On a
 4-core, 15 GB machine the six default schemes at 100k took about 17 minutes wall time with 4 workers (HAVEN about 1 minute,
 the graph schemes 7-16 minutes each). Finished (scheme, data, scale) jobs are skipped on rerun, so an interrupted run resumes.
-With `--set` or `--wide` the result is labelled `scheme@wide` / `scheme@knob=value`, so variants sit side by side in `report`.
+With `--set`, `--wide` or `--fixed-device` the result is labelled `scheme@wide` / `scheme@knob=value` / `scheme@fixedA`, so
+variants sit side by side in `report`.
 
 ### Why `clustered`, `flat` and `--wide` exist
 

@@ -60,11 +60,12 @@ def parse_sets(items):
     return out
 
 
-def tag(name, wide, sets):
-    return label_of(name) + ("@wide" if wide else "") + "".join("@%s=%g" % kv for kv in sorted(sets.items()))
+def tag(name, wide, sets, device=None):
+    return (label_of(name) + ("@wide" if wide else "") + "".join("@%s=%g" % kv for kv in sorted(sets.items()))
+            + ("@fixed" + device if device else ""))
 
 
-def job(name, data, scale_name, cache, wide=False, data_root=None, sets=None, mem_gb=None):
+def job(name, data, scale_name, cache, wide=False, data_root=None, sets=None, mem_gb=None, device=None):
     limit = int(mem_gb * (1 << 30)) if mem_gb else ADDRESS_SPACE[scale_name]
     resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     import torch
@@ -77,7 +78,7 @@ def job(name, data, scale_name, cache, wide=False, data_root=None, sets=None, me
     if unknown:
         sys.exit("unknown knob(s) %s; declared: %s" % (unknown, sorted(sch.knobs)))
     over.update(sets or {})
-    label = tag(name, wide, sets or {})
+    label = tag(name, wide, sets or {}, device)
     knobs, space = sch.knob_values(over), sch.namespace()
     scale = SCALES[scale_name]
     base, _, mm = data.partition("_m")
@@ -87,6 +88,8 @@ def job(name, data, scale_name, cache, wide=False, data_root=None, sets=None, me
         t["spec"]["dataset"] = DATA[base].get(t["spec"]["dataset"], t["spec"]["dataset"])
         if mm:
             t["spec"]["m"] = int(mm)
+        if device:  # fixed device: the firmware values of tasks.FIXED_FIRMWARE, no jitter, profile `device` unless the task pins one
+            t["spec"]["weather"] = dict({"profiles": [device]}, **t["spec"]["weather"], fixed=True)
         rec = runner.evaluate(sch, knobs, t, SEED, {"scale": scale, "data_root": data_root, "cache": cache},
                               time.monotonic() + TIME_LIMIT[scale_name], space)
         keep = {k: rec.get(k) for k in ("task", "failure", "norm", "speedups", "final", "curve", "bounds", "profile", "seconds",
@@ -154,25 +157,27 @@ def run(a):
     done = {(r["label"], r["data"], r["scale"]) for r in results(a.out)}
     names = a.schemes.split(",") if a.schemes else ["baseline", *PUBLISHED]
     sets = parse_sets(a.set)
+    a.fixed_device = getattr(a, "fixed_device", None)
     from . import scheme
     for n in names:  # fail before any process starts: bad file, bad knob name
         known = scheme.load(find(n)).knobs
         if set(sets) - set(known):
             sys.exit("%s: unknown knob(s) %s; declared: %s" % (n, sorted(set(sets) - set(known)), sorted(known)))
-    todo = [(n, d, s) for s in a.scale.split(",") for d in a.data.split(",") for n in names if (tag(n, a.wide, sets), d, s) not in done]
+    todo = [(n, d, s) for s in a.scale.split(",") for d in a.data.split(",") for n in names if (tag(n, a.wide, sets, a.fixed_device), d, s) not in done]
     procs, log = [], open(os.path.join(a.out, "driver.log"), "a")
     while todo or procs:
         while todo and len(procs) < a.workers:
             n, d, s = todo.pop(0)
-            err = open(os.path.join(a.out, "stderr_%s_%s_%s.log" % (tag(n, a.wide, sets), d, s)), "w")
+            err = open(os.path.join(a.out, "stderr_%s_%s_%s.log" % (tag(n, a.wide, sets, a.fixed_device), d, s)), "w")
             cmd = [sys.executable, "-m", "hbf_eval.bench", "one", "--scheme", n, "--data", d, "--scale", s, "--cache", a.cache]
             cmd += ["--data-root", a.data_root] if a.data_root else []
             cmd += ["--mem-gb", str(a.mem_gb)] if a.mem_gb else []
+            cmd += ["--fixed-device", a.fixed_device] if a.fixed_device else []
             for item in a.set or []:
                 cmd += ["--set", item]
             p = subprocess.Popen(cmd + (["--wide"] if a.wide else []), cwd=ROOT, stdout=subprocess.PIPE, stderr=err, text=True)
             budget = int(a.rss_gb * (1 << 30)) if a.rss_gb else RESIDENT[s]
-            procs.append(((tag(n, a.wide, sets), d, s), p, time.time(), budget, {"peak": 0, "over": False}))
+            procs.append(((tag(n, a.wide, sets, a.fixed_device), d, s), p, time.time(), budget, {"peak": 0, "over": False}))
             print(time.strftime("%F %T"), "start", *procs[-1][0], file=log, flush=True)
         time.sleep(1)
         for item in list(procs):
@@ -257,10 +262,13 @@ def main():
     ap.add_argument("--rss-gb", type=float, default=None,
                     help="resident-memory budget per scheme process in GiB; over it the run stops and is recorded as "
                          "'memory over budget' (default: none at 100k, 10 at 1m)")
+    ap.add_argument("--fixed-device", choices=("A", "B", "C", "D"), default=None,
+                    help="fixed device: firmware values of tasks.FIXED_FIRMWARE instead of a per-seed draw, no tR jitter, and this "
+                         "product profile for every task that does not pin its own (power_bound keeps C)")
     ap.add_argument("--data-root", default=None, help="folder of prepared datasets (see data.py); default: synthetic stand-ins")
     a = ap.parse_args()
     if a.cmd == "one":
-        print(json.dumps(job(a.scheme, a.data, a.scale, a.cache, a.wide, a.data_root, parse_sets(a.set), a.mem_gb)))
+        print(json.dumps(job(a.scheme, a.data, a.scale, a.cache, a.wide, a.data_root, parse_sets(a.set), a.mem_gb, a.fixed_device)))
     elif a.cmd == "run":
         run(a)
     elif a.cmd == "list":
