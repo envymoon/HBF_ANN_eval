@@ -2,7 +2,10 @@
 
 evaluate(scheme, knobs, task, seed, job, deadline) -> one record per task (curve, speedups, bounds, diagnostics).
 job = {"scale": ..., "data_root": ..., "cache": ...}; scale = {"cpp", "pool", "k", "efforts", "total_min", "total_max",
-"total_per_client", "n"} and, for the speedup score, "mode": "speedup" and "levels": [recall levels].
+"total_per_client", "n"} and, for the speedup score, "mode": "speedup" and "levels": [recall levels]. Optional:
+"tail_floor" (an operating point counts only if the mean recall of its worst 5 % of queries reaches it), "refine" (bisection
+steps on the effort interval that crosses each recall level) and "graded_floor" (a level not reached scores below
+the floor by the recall shortfall).
 """
 import hashlib
 import json
@@ -22,8 +25,9 @@ from .scoring import SPEEDUP_LEVEL, area, bounds, speedup
 from .sim import Session, TimeLimit
 from .tasks import LEVELS, clients, draw_weather, query_order, total_queries
 
-EVALUATOR = "hbf_ann.runner.v4"  # v4: serve may rewrite HBM / SRAM rows (ctx.hbm_write, ctx.sram_write) and run
-# per-lane control flow on the GPU (ctx.lanes)
+EVALUATOR = "hbf_ann.runner.v5"  # v5: tail-recall floor, effort bisection at each recall level, graded floor;
+# report: offline cost (build / layout seconds, index / HBF / HBM / SRAM bytes), latency ratios, dependent HBF read rounds
+# v4: serve may rewrite HBM / SRAM rows (ctx.hbm_write, ctx.sram_write) and run per-lane control flow on the GPU (ctx.lanes)
 # v3: buffer hits take the base-die SRAM access time
 # The build stage's own version: it is part of the cache key and of the build's random stream. Bump it only when build's
 # inputs or semantics change.
@@ -31,7 +35,9 @@ BUILD_VERSION = "hbf_ann.runner.v1"
 STATE_PER_CLIENT = 64 * 1024  # cap on the state a client may keep
 ONCHIP_PER_STACK = 32 << 20  # on-chip state per stack (position) of the GPU, x 8 positions, scaled like the channels
 INDEX_CAP = 16  # an index may take at most 16x the data (cache size guard)
+DEPTH_QUERIES = 8  # queries of the one-client read-rounds measurement
 _MEMO = {}
+_SECONDS = {}  # cache key -> wall seconds of the stage that produced it (report only)
 
 
 class Cache:
@@ -56,17 +62,25 @@ class Cache:
         if saved.get("sum") != digest(saved.get("value")):
             return None
         _MEMO[key] = saved["value"]
+        if "seconds" in saved:
+            _SECONDS[key] = saved["seconds"]
         return saved["value"]
 
-    def put(self, key, value, nbytes):
+    def seconds(self, key):
+        """Wall-clock seconds the stage took when it was computed (None if unknown, e.g. an entry written before v5)."""
+        return _SECONDS.get(key)
+
+    def put(self, key, value, nbytes, seconds=None):
         if len(_MEMO) > 8:
             _MEMO.pop(next(iter(_MEMO)))
         _MEMO[key] = value
+        if seconds is not None:
+            _SECONDS[key] = round(seconds, 3)
         if self.root and nbytes < (2 << 30):
             import torch
             os.makedirs(self.root, exist_ok=True)
             path = os.path.join(self.root, key + ".pt")
-            atomic_save({"value": value, "sum": digest(value)}, path)
+            atomic_save({"value": value, "sum": digest(value), "seconds": _SECONDS.get(key)}, path)
 
 
 def fingerprint(value):
@@ -150,13 +164,15 @@ def check_plan(plan, weather, data_bytes):
 
 
 def stage(space, name, key, args, cache, deadline):
+    """(value, cached, seconds): seconds is the wall time of computing the stage, now or when it was cached."""
     value = cache.get(key)
     if value is None:
+        t0 = time.monotonic()
         value = space[name](*args)
         if time.monotonic() > deadline:
             raise TimeLimit(name + " exceeded the time limit")
-        return value, False
-    return value, True
+        return value, False, time.monotonic() - t0
+    return value, True, cache.seconds(key)
 
 
 def evaluate(scheme, knobs, task, seed, job, deadline, space=None):
@@ -175,19 +191,19 @@ def evaluate(scheme, knobs, task, seed, job, deadline, space=None):
         cache = Cache(job.get("cache"))
         bkey = fingerprint({"stage": "build", "evaluator": BUILD_VERSION, "data": d["id"], **keys["build"]})
         bctx = BuildCtx(knobs, torch.Generator().manual_seed(datasets.stream_seed("build", bkey)), data_spec)
-        index, hit_b = stage(space, "build", bkey, (d["base"].clone(), bctx), cache, deadline)
+        index, hit_b, build_s = stage(space, "build", bkey, (d["base"].clone(), bctx), cache, deadline)
         tensor_dict(index, "build's index")
         if nbytes(index) > INDEX_CAP * data_bytes:
             raise SchemeError("index too large: %d bytes, cap %d" % (nbytes(index), INDEX_CAP * data_bytes))
         if not hit_b:
-            cache.put(bkey, index, nbytes(index))
+            cache.put(bkey, index, nbytes(index), build_s)
         layout_spec = dict(data_spec, **Geometry.options(weather, data_bytes))
         lkey = fingerprint({"stage": "layout", "build": bkey, "spec": layout_spec, **keys["layout"]})
         lctx = BuildCtx(knobs, torch.Generator().manual_seed(datasets.stream_seed("layout", lkey)), layout_spec)
-        plan, hit_l = stage(space, "layout", lkey, ({kk: v.clone() for kk, v in index.items()}, d["base"].clone(), lctx), cache, deadline)
+        plan, hit_l, layout_s = stage(space, "layout", lkey, ({kk: v.clone() for kk, v in index.items()}, d["base"].clone(), lctx), cache, deadline)
         geo = check_plan(plan, weather, data_bytes)
         if not hit_l:
-            cache.put(lkey, plan, plan["pages"].numel() + nbytes(plan["hbm"]) + nbytes(plan["sram"]))
+            cache.put(lkey, plan, plan["pages"].numel() + nbytes(plan["hbm"]) + nbytes(plan["sram"]), layout_s)
         N = clients(spec, weather)
         total = total_queries(spec, N, scale)
         order = query_order(seed, spec, d["queries"].shape[0], total, d["queries"])
@@ -200,10 +216,11 @@ def evaluate(scheme, knobs, task, seed, job, deadline, space=None):
                           sram={kk: list(v.shape) for kk, v in plan["sram"].items()})
         table = TABLES[job.get("compute", DEFAULT_TABLE)]
         bound = bounds(weather, data_bytes, n, dim, k, vb, N, table)
-        points, curve, diag_at = [], [], None
+        points, curve, diag_at, point_efforts = [], [], None, []
         efforts, compact = scale["efforts"], scale.get("mode") == "speedup"
-        for i in range(efforts):
-            effort = i / (efforts - 1) if efforts > 1 else 1.
+        tail = scale.get("tail_floor")  # an operating point counts only if the mean recall of its worst 5 % reaches this
+
+        def run_at(effort):
             device = geo.device(weather, plan["interleave"], datasets.stream_seed("device", seed, task["name"]),
                                 refresh=plan.get("refresh", "default"))
             g = torch.Generator().manual_seed(datasets.stream_seed("serve", seed, task["name"]))
@@ -213,24 +230,68 @@ def evaluate(scheme, knobs, task, seed, job, deadline, space=None):
             row = measure(out, truth, k, device, weather, N)
             curve.append([round(effort, 4)] + [row[x] for x in ("recall", "qps", "p99_us", "p50_us", "reads_per_query", "senses_per_query")])
             points.append(row)
+            point_efforts.append(effort)
+            return row
+
+        # the speedup score reads the curve at 0.9 (or at each of scale["levels"]); the full suite up to LEVELS[-1]
+        targets = sorted(scale["levels"]) if compact and scale.get("levels") else [SPEEDUP_LEVEL if compact else LEVELS[-1]]
+        ok = lambda row, level: row["recall"] >= level and tail_ok(row, tail)
+        for i in range(efforts):
+            effort = i / (efforts - 1) if efforts > 1 else 1.
+            if ok(run_at(effort), targets[-1]):
+                break
+        # bisect the effort interval that crosses each level, so the crossing is read from nearby points instead of
+        # interpolated across a whole effort step
+        for level in targets:
+            for _ in range(scale.get("refine", 0)):
+                fail = [e for e, r in zip(point_efforts, points) if not ok(r, level)]
+                good = [e for e, r in zip(point_efforts, points) if ok(r, level) and (not fail or e > max(fail))]
+                if not fail or not good:
+                    break
+                run_at((max(fail) + min(good)) / 2)
+        curve.sort(key=lambda c: c[0])
+        for row in points:
             if diag_at is None or abs(row["recall"] - .95) < abs(diag_at["recall"] - .95):
                 diag_at = row
-            stop = max(scale["levels"]) if compact and scale.get("levels") else (SPEEDUP_LEVEL if compact else LEVELS[-1])
-            if row["recall"] >= stop:  # the speedup score reads the curve at 0.9 (or up to the highest of scale["levels"])
-                break
+
+        # Dependent HBF read rounds per query (report only): one client, DEPTH_QUERIES queries at the effort of the
+        # diagnostics point; the wakes in which serve issues HBF reads are the query's chain of dependent read rounds (a
+        # graph walk: about one per hop; a cluster scan: one or two).
+        def read_rounds():
+            try:
+                q = min(DEPTH_QUERIES, queries.shape[0])
+                device = geo.device(weather, plan["interleave"], datasets.stream_seed("depth", seed, task["name"]),
+                                    refresh=plan.get("refresh", "default"))
+                g = torch.Generator().manual_seed(datasets.stream_seed("depth", seed, task["name"]))
+                cap1 = min(STATE_PER_CLIENT, cap)
+                session = Session(device=device, plan=plan, queries=queries[:q], k=k, n=n, clients=1,
+                                  spec=dict(serve_spec, clients=1, state_bytes=cap1), knobs=knobs,
+                                  effort=point_efforts[points.index(diag_at)], generator=g, state_cap=cap1, deadline=deadline,
+                                  table=table)
+                return round(session.run(space["serve"])["read_wakes"] / q, 3)
+            except TimeLimit:
+                raise
+            except Exception:
+                return None
+        rounds = read_rounds()
         if spec["score"] == "p99":
-            pts, lo, hi = [(p["recall"], 1e6 / p["p99_us"]) for p in points if p["p99_us"] > 0], 1e6 / bound["lat_lo"], 1e6 / bound["lat_hi"]
+            pts, lo, hi = [(p["recall"], 1e6 / p["p99_us"]) for p in points if p["p99_us"] > 0 and tail_ok(p, tail)], 1e6 / bound["lat_lo"], 1e6 / bound["lat_hi"]
         else:
-            pts, lo, hi = [(p["recall"], p["qps"]) for p in points], bound["qps_lo"], bound["qps_hi"]
+            pts, lo, hi = [(p["recall"], p["qps"]) for p in points if tail_ok(p, tail)], bound["qps_lo"], bound["qps_hi"]
+        if tail is not None:
+            record["tail_floor"] = tail
+            record["tail_failed"] = sum(not tail_ok(p, tail) for p in points)  # operating points dropped by the floor
         norm, levels = area(pts, lo, hi)
         if compact:
             record["area"] = round(norm, 6)
-            norm = speedup(pts, lo)
+            graded = scale.get("graded_floor", False)
+            norm = speedup(pts, lo, graded=graded)
             if scale.get("levels"):  # the same score read at other recall levels
-                record["speedups"] = {"%g" % lv: round(speedup(pts, lo, lv), 6) for lv in scale["levels"]}
+                record["speedups"] = {"%g" % lv: round(speedup(pts, lo, lv, graded), 6) for lv in scale["levels"]}
         record.update(norm=round(norm, 6), final=round(max(p["recall"] for p in points), 6), levels=[round(x, 4) for x in levels],
                       curve=curve, bounds={kk: (round(v, 3) if isinstance(v, float) else v) for kk, v in bound.items()},
-                      diag=diag_at, m=geo.m, profile=weather["profile"], clients=N, queries=total, cached=[hit_b, hit_l], synthetic=d["synthetic"],
+                      diag=dict(diag_at, **latency_ratios(diag_at, bound, geo, table), **({"read_rounds_per_query": rounds} if rounds is not None else {})), m=geo.m,
+                      cost=cost_report(build_s, layout_s, index, plan, geo, data_bytes), profile=weather["profile"], clients=N, queries=total, cached=[hit_b, hit_l], synthetic=d["synthetic"],
                       weather={kk: (round(v, 4) if isinstance(v, float) else v) for kk, v in weather.items()})
     except (SchemeError, TimeLimit) as exc:
         record["failure"] = type(exc).__name__ + ": " + str(exc)[:300]
@@ -238,6 +299,39 @@ def evaluate(scheme, knobs, task, seed, job, deadline, space=None):
         record["failure"] = "%s: %s" % (type(exc).__name__, str(exc)[:300])
     record["seconds"] = round(time.monotonic() - started, 4)
     return record
+
+
+def tail_ok(row, floor):
+    """Tail-recall floor: the mean recall of the worst 5 % of queries must reach `floor` (None: no floor)."""
+    return floor is None or row["recall_worst5"] >= floor
+
+
+def deterministic_part(record):
+    """The record without wall-clock fields (run seconds, cache hits, offline stage seconds): what two runs must agree on."""
+    out = {k: v for k, v in record.items() if k not in ("seconds", "cached")}
+    if isinstance(out.get("cost"), dict):
+        out["cost"] = {k: v for k, v in out["cost"].items() if not k.endswith("_seconds")}
+    return out
+
+
+def cost_report(build_s, layout_s, index, plan, geo, data_bytes):
+    """Report only (not scored): what the offline stages cost and how much of each memory the index takes. Seconds are wall
+    time on the machine that built the entry, so they vary between machines; bytes are exact."""
+    hbm = nbytes(plan["hbm"])
+    return {"build_seconds": None if build_s is None else round(build_s, 3),
+            "layout_seconds": None if layout_s is None else round(layout_s, 3),
+            "index_bytes": nbytes(index), "hbf_bytes": int(plan["pages"].shape[0]) * PAGE, "hbm_bytes": hbm,
+            "sram_bytes": nbytes(plan["sram"]), "data_bytes": data_bytes,
+            "hbm_share_of_budget": round(hbm / max(geo.hbm_budget, 1), 4), "hbm_over_data": round(hbm / max(data_bytes, 1), 4),
+            "hbf_over_data": round(int(plan["pages"].shape[0]) * PAGE / max(data_bytes, 1), 4)}
+
+
+def latency_ratios(row, bound, geo, table):
+    """Report only: the median latency in units of the fastest possible query on HBF (one read: the roof's latency) and of
+    one HBM access (wake step + launch + HBM latency); the second says how close to an all-HBM query the scheme gets."""
+    hbm_floor = table["step_us"] + table["launch_us"] + geo.hbm_latency
+    return {"p50_over_hbf_floor": round(row["p50_us"] / bound["lat_hi"], 3),
+            "p50_over_hbm_floor": round(row["p50_us"] / hbm_floor, 3)}
 
 
 def measure(out, truth, k, device, weather, clients):

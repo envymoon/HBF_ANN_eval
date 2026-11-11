@@ -12,7 +12,13 @@ ANN search. Nothing here needs a GPU: the platform is simulated and the scheme's
 
 For each task: `speedup = log2(throughput of the scheme at recall@10 = R / throughput of batched brute force on the same device)`.
 
-- 0 = as fast as the scan, +1 = twice as fast, −1 = half as fast. A scheme that never reaches recall R scores the floor, −8.
+- 0 = as fast as the scan, +1 = twice as fast, −1 = half as fast. A scheme that never reaches recall R scores below the floor
+  −8 by how far it falls short: −8 × (1 + (R − best recall) / R), so between −16 and −8. A scheme that misses R by a little
+  ranks above one that does not work at all, and still below every scheme that reaches R.
+- **Tail-recall floor:** an operating point counts only if the worst 5 % of its queries reach recall 0.3 on average. Without it,
+  a scheme could reach R on average while some queries get almost nothing (for example by skipping hard regions).
+- **Measured, not interpolated:** the effort sweep (9 steps) is followed by two bisection steps on the effort interval that
+  crosses each R, so the value at R is read from nearby points.
 - Throughput is closed-loop: each client sends its next query when the last is answered. With few clients it is
   `clients / mean latency`, so low-load tasks compare latency.
 - The score of a scheme is the mean over the four tasks, read at R = 0.90 (also 0.95 and 0.99).
@@ -126,13 +132,23 @@ You do not need them for a first run; the defaults are the standard setting.
 The score covers **query serving on the simulated device**: `serve`, the HBF reads it issues, and the GPU work it runs. The offline stages
 are free and unmeasured:
 
-- **Index construction and preprocessing** (`build`: graph construction, k-means, PQ training, sorting, reordering) is not timed, not
-  charged to the device, and its cost does not enter the score. The only limit is a wall-clock budget per scheme (1 h at 100k), and the
-  size of `build` is not part of the result. A scheme that needs hours of preprocessing scores the same as one that needs seconds.
+- **Index construction and preprocessing** (`build`: graph construction, k-means, PQ training, sorting, reordering) is not charged
+  to the device, and its cost does not enter the score. The only limit is a wall-clock budget per scheme (1 h at 100k). It is
+  **reported** next to the score (see "Cost report" below), so a scheme that needs hours of preprocessing shows it, but scores the
+  same as one that needs seconds.
 - **Writing the index to HBF** (`layout`) is free too: the pages appear on the device before the first query. Program time, write energy
   and wear for loading the index are not modelled; only refresh and programs *during* serving (refresh debt, `ctx.refresh`) are.
-- **Updates and deletions**, **index size on flash** beyond the capacity limit, **endurance**, and **tail recall** (recall is the mean
-  over queries; the worst-5% value is recorded in the diagnostics but not scored).
+- **Updates and deletions**, **index size on flash** beyond the capacity limit (reported, not scored), and **endurance**.
+  Tail recall enters only through the floor above (worst 5 % at least 0.3), not as a score of its own.
+
+### Cost report and extra diagnostics (not scored)
+
+Every task record carries `cost`: `build_seconds` and `layout_seconds` (wall time on the machine that built the entry, so it
+varies between machines), `index_bytes`, `hbf_bytes`, `hbm_bytes`, `sram_bytes`, `hbm_share_of_budget`, `hbm_over_data` and
+`hbf_over_data`. The diagnostics add `p50_over_hbf_floor` (median latency in units of one HBF read, the fastest possible query),
+`p50_over_hbm_floor` (in units of one HBM access) and `read_rounds_per_query` (dependent HBF read rounds per query, measured with
+one client: a graph walk has about one per hop, a cluster scan one or two). `tail_failed` counts operating points dropped by the
+tail-recall floor.
 
 If your idea trades preprocessing for query speed (a better layout that takes a long time to compute), the score shows only the query-side gain.
 
@@ -186,6 +202,8 @@ differ slightly from `bench` output, which uses 9 points).
 | `baseline.py` | −1.58 | none |
 
 Their knob values are the tuned ones; `reference/results_100k.jsonl` has the `bench` output of Compass, Atlas and Router.
+The scores above and the reference file were measured with evaluator v4 (before the tail-recall floor, the bisection at each
+recall level and the graded floor of v5); `compare` against them reports those differences until they are refreshed.
 
 ## Figures
 
@@ -309,4 +327,5 @@ The framework is still under development. These are known limits of the current 
 - **No dynamic updates.** The index is built once: no insertion, deletion or rebuild during serving, and HBF writes are not simulated. (HBM and SRAM rows placed by `layout` can be rewritten during serving, e.g. as a cache.)
 - **One platform: GPU + HBM + HBF.** No host CPU computation, no host memory or SSD tier, no multiple GPUs or network. Designs that depend on these cannot be expressed.
 - **GPU computation is billed from tensor shapes.** Custom CUDA kernels, operator fusion and other low-level optimisations can be neither expressed nor measured.
-- **The score covers throughput and latency only.** Build time, preprocessing, index size, update performance and tail recall do not affect it.
+- **The score covers throughput and latency only.** Build time, preprocessing and index size are reported but do not affect it;
+  update performance is not measured; tail recall enters only as a floor.

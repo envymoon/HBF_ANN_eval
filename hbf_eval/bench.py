@@ -9,7 +9,9 @@
     python3 -m hbf_eval.bench compare results/results.jsonl reference/results_100k.jsonl
 
 A result is log2(throughput of the scheme at recall R / throughput of batched brute force on the same device) per task, read at
-R = 0.90, 0.95 and 0.99; a level the scheme does not reach scores the floor (-8). The score of a scheme is the mean over the four
+R = 0.90, 0.95 and 0.99. An operating point counts only if the worst 5 % of its queries reach recall 0.3; the effort
+interval around each level's crossing is bisected twice; a level the scheme does not reach scores below the floor (-8) by its
+recall shortfall (in (-16, -8]). The score of a scheme is the mean over the four
 tasks (high_load, low_load_4, power_bound, data_deep) at one seed. Data variants: "clustered" (SIFT-like and DEEP-like
 stand-ins), "flat" (the same shapes, weakly clustered), and a suffix _mK sets the number of HBM positions of the platform
 (e.g. clustered_m1). "--wide" opens every *_hi knob (the upper end of an effort range) to its limit.
@@ -26,7 +28,10 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEVELS = [.9, .95, .99]
 BASE = {"cpp": 1, "pool": 3072, "k": 10, "efforts": 9, "total_min": 400, "total_max": 1 << 20, "total_per_client": 2,
-        "mode": "speedup", "n": 100000, "levels": LEVELS}
+        "mode": "speedup", "n": 100000, "levels": LEVELS,
+        # an operating point counts only if the worst 5 % of its queries reach recall 0.3; two bisection steps around each
+        # level's crossing; a level not reached scores below -8 by the recall shortfall
+        "tail_floor": .3, "refine": 2, "graded_floor": True}
 SCALES = {"100k": BASE, "1m": dict(BASE, n=1000000, cpp=2)}
 DATA = {"clustered": {}, "flat": {"sift": "sift_flat", "deep": "deep_flat"}}
 SEED = 2000000
@@ -84,9 +89,12 @@ def job(name, data, scale_name, cache, wide=False, data_root=None, sets=None, me
             t["spec"]["m"] = int(mm)
         rec = runner.evaluate(sch, knobs, t, SEED, {"scale": scale, "data_root": data_root, "cache": cache},
                               time.monotonic() + TIME_LIMIT[scale_name], space)
-        keep = {k: rec.get(k) for k in ("task", "failure", "norm", "speedups", "final", "curve", "bounds", "profile", "seconds")}
+        keep = {k: rec.get(k) for k in ("task", "failure", "norm", "speedups", "final", "curve", "bounds", "profile", "seconds",
+                                         "cost", "tail_failed")}
         keep["diag"] = {k: rec["diag"].get(k) for k in ("recall", "qps", "p50_us", "reads_per_query", "senses_per_query", "hit_rate",
-                                                        "compute_share", "wake_share", "unit_util", "power_wait_share")} if rec.get("diag") else None
+                                                        "compute_share", "wake_share", "unit_util", "power_wait_share",
+                                                        "recall_worst5", "read_rounds_per_query", "p50_over_hbf_floor",
+                                                        "p50_over_hbm_floor")} if rec.get("diag") else None
         keep["dataset"] = t["spec"]["dataset"]
         tasks.append(keep)
         print(json.dumps({"label": label, "data": data, "scale": scale_name, "task": t["name"],

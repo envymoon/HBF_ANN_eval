@@ -176,6 +176,9 @@ class Session:
         self.results = [None] * self.total
         self.issued = 0
         self.ctx_us, self.steps, self.max_state = 0., 0, 0
+        # report only: wakes in which serve issued at least one HBF read; with one client this is the query's chain of
+        # dependent HBF read rounds
+        self.read_wakes, self.read_this_wake = 0, False
         self.lane, self.lane_phases, self.lane_count, self.lane_syncs = None, 0, 0, 0
 
     # ---- billing ----
@@ -248,6 +251,7 @@ class Session:
                 self.device.submit(self.cursor, p, o, b, tags.contiguous().numpy(), bool(batch))
             except DeviceError as exc:
                 raise SchemeError("submit: " + str(exc)) from None
+            self.read_this_wake = True
             self.req_page.extend(p)
             self.req_off.extend(o)
             self.req_bytes.extend(b)
@@ -450,6 +454,7 @@ class Session:
             self.open.update(ev["qids"].tolist())
             self.cursor = wake + self.table["step_us"]
             self.wait_count, self.wait_timeout = 1, math.inf
+            self.read_this_wake = False
             with self.meter:
                 state = serve(state, ev, ctx)
             if self.lane is not None:
@@ -461,6 +466,7 @@ class Session:
                 raise SchemeError("state too large: %d bytes, cap %d" % (size, self.state_cap))
             self.max_state = max(self.max_state, size)
             self.steps += 1
+            self.read_wakes += self.read_this_wake
             self.check_time()
             if not self.open and not self.arrivals and self.issued >= self.total:
                 break
@@ -473,7 +479,7 @@ class Session:
 
     def summary(self):
         return {"arrive": self.arrive_t, "finish": self.finish_t, "results": self.results, "end": self.cursor,
-                "steps": self.steps, "step_us": self.table["step_us"], "compute_us": self.meter.time, "ctx_us": self.ctx_us, "ops": dict(self.meter.counts, sync=self.meter.counts["sync"] - self.lane_syncs, lane_sync=self.lane_syncs),
+                "steps": self.steps, "read_wakes": self.read_wakes, "step_us": self.table["step_us"], "compute_us": self.meter.time, "ctx_us": self.ctx_us, "ops": dict(self.meter.counts, sync=self.meter.counts["sync"] - self.lane_syncs, lane_sync=self.lane_syncs),
                 "lane_phases": self.lane_phases, "lanes": self.lane_count,
                 "max_state": self.max_state,
                 "hbm_written": self.written["hbm"], "sram_written": self.written["sram"]}

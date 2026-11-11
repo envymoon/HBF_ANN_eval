@@ -50,11 +50,16 @@ def area(points, lo, hi):
 SPEEDUP_LEVEL, SPEEDUP_FLOOR = .90, -8.  # speedup score: default recall level and floor
 
 
-def speedup(points, lo, level=SPEEDUP_LEVEL):
+def speedup(points, lo, level=SPEEDUP_LEVEL, graded=False):
     """Speedup score for one task: log2 of the value (qps, or 1 / p99) reachable at recall 0.9 over batched brute force's, so
     0 = as fast as the scan, +1 = twice as fast, -1 = half as fast. Floored at -8 (256x slower); a curve that never reaches
-    0.9 scores the floor."""
+    0.9 scores the floor. With graded: a curve that never reaches the level scores below the floor by its recall shortfall,
+    SPEEDUP_FLOOR * (1 + (level - best recall) / level), so in (-16, -8]: a scheme that misses by a little ranks above one
+    that does not work at all, and still below every scheme that reaches it."""
     v = value_at(frontier(points), level)
+    if v is None and graded:
+        best = max((r for r, _ in points), default=0.)
+        return SPEEDUP_FLOOR * (1 + max(0., level - best) / level)
     return SPEEDUP_FLOOR if v is None else max(SPEEDUP_FLOOR, math.log2(v / lo))
 
 
