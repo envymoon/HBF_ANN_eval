@@ -3,628 +3,1128 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>hbf_eval Scheme Manual</title>
-<meta name="description" content="Reference manual for writing ANN search schemes for hbf_eval: what build, layout and serve receive, what they may return, every ctx method, how time is billed, and which designs the evaluator can and cannot express.">
+<title>hbf_eval Scheme Guide</title>
+<meta name="description" content="How to turn an ANN search idea into an hbf_eval scheme: the machine you program, what ctx is, a step-by-step worked example, and every argument, field and ctx method explained with examples, costs and pitfalls.">
 <style>
 :root {
   --bg: #ffffff; --fg: #1d2330; --muted: #5b6474; --line: #dde2ea; --soft: #f4f6f9; --accent: #1f5fae;
   --code-bg: #f1f3f6; --yes: #1d7a3e; --yes-bg: #e6f4ea; --part: #8a5a00; --part-bg: #fdf3dc; --no: #a2281f; --no-bg: #fbe8e6;
+  --d-gpu: #dce8f8; --d-hbm: #e6f4ea; --d-hbf: #fdf3dc; --d-edge: #5b6474;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #14171c; --fg: #e3e7ee; --muted: #9aa3b2; --line: #2c323c; --soft: #1b1f26; --accent: #6ea8ff;
     --code-bg: #1f242c; --yes: #6fd393; --yes-bg: #17301f; --part: #f0c060; --part-bg: #33290f; --no: #ff8a80; --no-bg: #3a1a17;
+    --d-gpu: #1d2a3d; --d-hbm: #17301f; --d-hbf: #33290f; --d-edge: #9aa3b2;
   }
 }
 :root[data-theme="dark"] {
   --bg: #14171c; --fg: #e3e7ee; --muted: #9aa3b2; --line: #2c323c; --soft: #1b1f26; --accent: #6ea8ff;
   --code-bg: #1f242c; --yes: #6fd393; --yes-bg: #17301f; --part: #f0c060; --part-bg: #33290f; --no: #ff8a80; --no-bg: #3a1a17;
+  --d-gpu: #1d2a3d; --d-hbm: #17301f; --d-hbf: #33290f; --d-edge: #9aa3b2;
 }
 * { box-sizing: border-box; }
 html { scroll-padding-top: 16px; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.65 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
 code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
 pre { background: var(--code-bg); padding: 12px 14px; border-radius: 6px; overflow-x: auto; line-height: 1.45; }
 pre code { background: none; padding: 0; }
-.wrap { display: grid; grid-template-columns: 250px minmax(0, 1fr); max-width: 1280px; margin: 0 auto; }
-nav { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; padding: 24px 18px; border-right: 1px solid var(--line); font-size: 14px; }
-nav .title { font-weight: 700; font-size: 16px; margin-bottom: 4px; }
-nav .ver { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+.wrap { display: grid; grid-template-columns: 260px minmax(0, 1fr); max-width: 1320px; margin: 0 auto; }
+nav { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; padding: 22px 16px; border-right: 1px solid var(--line); font-size: 13.5px; }
+nav .title { font-weight: 700; font-size: 16px; }
+nav .ver { color: var(--muted); font-size: 12px; margin: 2px 0 14px; }
+nav .grp { font-weight: 700; color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 4px; }
 nav ol { list-style: none; padding: 0; margin: 0; }
-nav li { margin: 2px 0; }
-nav li li { padding-left: 14px; font-size: 13px; }
-main { padding: 28px 40px 80px; min-width: 0; }
+nav li { margin: 1px 0; }
+main { padding: 28px 44px 80px; min-width: 0; max-width: 1020px; }
 h1 { font-size: 28px; margin: 0 0 6px; }
-h2 { font-size: 22px; margin: 44px 0 10px; padding-top: 12px; border-top: 1px solid var(--line); }
-h3 { font-size: 17px; margin: 28px 0 8px; }
+h2 { font-size: 22px; margin: 48px 0 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+h3 { font-size: 17px; margin: 30px 0 8px; }
 h4 { font-size: 15px; margin: 20px 0 6px; }
+.partlabel { margin-top: 56px; color: var(--accent); font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
 .lead { color: var(--muted); font-size: 16px; margin-top: 0; }
 table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 14px; display: block; overflow-x: auto; }
 th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
 th { background: var(--soft); font-weight: 600; }
-td code { white-space: nowrap; }
-.sig { background: var(--soft); border-left: 3px solid var(--accent); padding: 10px 14px; border-radius: 4px; margin: 10px 0; }
-.sig code { background: none; font-size: 14px; }
+.sig { background: var(--soft); border-left: 3px solid var(--accent); padding: 10px 14px; border-radius: 4px; margin: 14px 0 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; font-weight: 600; overflow-x: auto; }
 .box { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; margin: 12px 0; }
+.warn { border-left: 3px solid var(--part); }
 .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
 .yes { color: var(--yes); background: var(--yes-bg); }
 .part { color: var(--part); background: var(--part-bg); }
 .no { color: var(--no); background: var(--no-bg); }
-.method { margin: 18px 0 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; font-weight: 600; }
 dl { margin: 6px 0 12px; }
-dt { font-weight: 600; margin-top: 6px; }
+dt { font-weight: 600; margin-top: 8px; }
 dd { margin: 2px 0 6px 18px; }
-.flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0; }
-.flow div { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: var(--soft); font-size: 14px; }
-.flow b { display: block; margin-bottom: 4px; }
+figure { margin: 16px 0; }
+figure svg { width: 100%; height: auto; max-width: 860px; display: block; }
+figcaption { color: var(--muted); font-size: 13px; margin-top: 6px; }
 .themebtn { margin-top: 16px; font-size: 12px; background: var(--soft); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
-@media (max-width: 860px) {
+@media (max-width: 880px) {
   .wrap { grid-template-columns: 1fr; }
   nav { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); padding: 16px; }
   main { padding: 20px 16px 60px; }
-  .flow { grid-template-columns: 1fr; }
 }
 </style>
 </head>
 <body>
 <div class="wrap">
 <nav>
-  <div class="title">hbf_eval manual</div>
+  <div class="title">hbf_eval scheme guide</div>
   <div class="ver">Evaluator v5 · interface <code>hbf.ann.v2</code></div>
+  <div class="grp">Part I · Concepts</div>
   <ol>
-    <li><a href="#overview">1. Overview</a></li>
-    <li><a href="#capabilities">2. Can I express this?</a></li>
-    <li><a href="#file">3. The scheme file</a></li>
-    <li><a href="#build">4. build</a></li>
-    <li><a href="#layout">5. layout</a>
-      <ol><li><a href="#layout-spec">ctx.spec() fields</a></li><li><a href="#plan">the plan</a></li><li><a href="#placement">where a page lives</a></li></ol></li>
-    <li><a href="#serve">6. serve</a>
-      <ol><li><a href="#loop">the wake loop</a></li><li><a href="#events">events</a></li><li><a href="#state">state</a></li><li><a href="#ctx">ctx methods</a></li></ol></li>
-    <li><a href="#billing">7. How time is billed</a></li>
-    <li><a href="#device">8. What the device does</a></li>
-    <li><a href="#language">9. Language rules</a></li>
-    <li><a href="#limits">10. All limits</a></li>
-    <li><a href="#tasks">11. Tasks and score</a></li>
-    <li><a href="#errors">12. Error messages</a></li>
+    <li><a href="#machine">1. The machine you program</a></li>
+    <li><a href="#halves">2. Offline and online</a></li>
+    <li><a href="#ctx-intro">3. What <code>ctx</code> is</a></li>
+    <li><a href="#time">4. How simulated time moves</a></li>
+    <li><a href="#bytes">5. Bytes, ids and tensors</a></li>
+  </ol>
+  <div class="grp">Part II · Worked example</div>
+  <ol>
+    <li><a href="#tut-idea">6. From idea to plan</a></li>
+    <li><a href="#tut-knobs">7. KNOBS</a></li>
+    <li><a href="#tut-build">8. Writing build</a></li>
+    <li><a href="#tut-layout">9. Writing layout</a></li>
+    <li><a href="#tut-serve">10. Writing serve</a></li>
+    <li><a href="#tut-life">11. One query's life</a></li>
+    <li><a href="#tut-run">12. Run it, read the result</a></li>
+    <li><a href="#tut-listing">13. Full listing</a></li>
+  </ol>
+  <div class="grp">Part III · Reference</div>
+  <ol>
+    <li><a href="#ref-build">14. build: arguments</a></li>
+    <li><a href="#ref-layout">15. layout: arguments and spec</a></li>
+    <li><a href="#ref-plan">16. The plan</a></li>
+    <li><a href="#ref-serve">17. serve: state and events</a></li>
+    <li><a href="#ref-ctx">18. ctx in serve, method by method</a></li>
+  </ol>
+  <div class="grp">Part IV · Patterns</div>
+  <ol>
+    <li><a href="#pat-graph">19. A graph walk</a></li>
+    <li><a href="#pat-coalesce">20. Coalescing by unit</a></li>
+    <li><a href="#pat-pipeline">21. Pipelining and speculation</a></li>
+    <li><a href="#pat-lanes">22. Per-query branches</a></li>
+    <li><a href="#pat-cache">23. A cache filled online</a></li>
+    <li><a href="#pat-refresh">24. Your own refresh</a></li>
+    <li><a href="#pat-wait">25. Fewer, fuller wakes</a></li>
+  </ol>
+  <div class="grp">Part V · Rules and limits</div>
+  <ol>
+    <li><a href="#capabilities">26. Can I express this?</a></li>
+    <li><a href="#billing">27. Billing in detail</a></li>
+    <li><a href="#device">28. The device's read path</a></li>
+    <li><a href="#language">29. Language rules</a></li>
+    <li><a href="#limits">30. Limits and errors</a></li>
+    <li><a href="#tasks">31. Tasks and score</a></li>
   </ol>
   <button class="themebtn" id="themebtn" type="button">Light / dark</button>
 </nav>
 <main>
 
-<h1>Scheme manual</h1>
-<p class="lead">Everything a scheme can use, what it costs, and what it cannot do. Read this instead of the source code. The
-source remains the final authority: the interface text is <code>TEXT</code> in <code>hbf_eval/contract.py</code>.</p>
-<p>Repository: <a href="https://github.com/envymoon/HBF_ANN_eval">github.com/envymoon/HBF_ANN_eval</a> · how to run:
-<a href="https://github.com/envymoon/HBF_ANN_eval#run">README</a></p>
+<h1>Scheme guide</h1>
+<p class="lead">How to turn an idea for approximate nearest-neighbour (ANN) search on High Bandwidth Flash into a scheme this
+evaluator can score: what machine you are programming, what <code>ctx</code> is, a scheme written from scratch step by step,
+and then every argument, field and method explained with examples, costs and pitfalls.</p>
+<p>Repository: <a href="https://github.com/envymoon/HBF_ANN_eval">github.com/envymoon/HBF_ANN_eval</a>. The worked example is
+<a href="https://github.com/envymoon/HBF_ANN_eval/blob/main/docs/tutorial_ivf.py"><code>docs/tutorial_ivf.py</code></a>.
+If anything here disagrees with the code, the code wins; the interface text is <code>TEXT</code> in <code>hbf_eval/contract.py</code>.</p>
 
-<!-- ============================================================ -->
-<h2 id="overview">1. Overview</h2>
-<p>A scheme is one Python file with three entry functions. The evaluator calls them in order:</p>
-<div class="flow">
-  <div><b>build(vectors, ctx) → index</b>Offline, once per dataset. Sees all base vectors. Builds any data structure.
-    <br><span class="tag yes">not timed</span></div>
-  <div><b>layout(index, vectors, ctx) → plan</b>Offline. Sees the device's datasheet. Decides which bytes go to HBF pages, HBM
-    and per-channel SRAM. <br><span class="tag yes">not timed</span></div>
-  <div><b>serve(state, events, ctx) → state</b>Online. Called at every wake. Issues reads, computes, answers queries.
-    <br><span class="tag no">timed</span></div>
-</div>
-<ul>
-  <li><b>The one rule to design around:</b> <code>serve</code> never sees <code>vectors</code> or <code>index</code>.
-    It sees only what <code>layout</code> placed, and every access to it goes through <code>ctx</code>, which bills time.</li>
-  <li>Time in <code>serve</code> is simulated, not measured. HBF reads run on an event-level device model; GPU work is billed
-    from tensor shapes; HBM and SRAM reads are billed by bandwidth and latency. The same inputs always give the same result.</li>
-  <li>The host sweeps <code>ctx.effort</code> from 0 to 1 to draw a recall–throughput curve. The score reads that curve at
-    recall@10 = 0.90 (also 0.95, 0.99).</li>
-</ul>
+<!-- ================================================================== PART I -->
+<div class="partlabel">Part I · Concepts</div>
 
-<!-- ============================================================ -->
-<h2 id="capabilities">2. Can I express this?</h2>
-<p>Look up the kind of design you have in mind. <span class="tag yes">Yes</span> works directly;
-<span class="tag part">Partly</span> works with a workaround or a restriction; <span class="tag no">No</span> cannot be
-expressed in the current version.</p>
+<h2 id="machine">1. The machine you program</h2>
+<p>Your scheme runs on a simulated GPU with two kinds of memory next to it: <b>HBM</b> (fast, small) and <b>HBF</b> (flash
+stacked like HBM: large, high bandwidth, but each read first has to <i>sense</i> a whole flash page, which takes microseconds).
+The base vectors do not fit in HBM; they have to live in HBF.</p>
 
-<h3>Index and data structures</h3>
-<table>
-<tr><th>Design</th><th></th><th>How, or why not</th></tr>
-<tr><td>Any index: graph, IVF, PQ / SQ / OPQ, LSH, trees, multi-level, hybrids</td><td><span class="tag yes">Yes</span></td>
-  <td><code>build</code> is arbitrary torch code over the base vectors (1 h wall-clock budget at 100K, 2 h at 1M). The index may
-  be at most 16× the data size.</td></tr>
-<tr><td>Learned components (routers, learned quantizers, small networks)</td><td><span class="tag part">Partly</span></td>
-  <td>Train in <code>build</code> with plain tensor code and <code>torch.autograd.grad</code>. <code>torch.nn</code> and
-  <code>torch.optim</code> are not available: write the layers and the update step yourself. Inference in <code>serve</code>
-  is billed like any tensor op.</td></tr>
-<tr><td>Using the query distribution while building</td><td><span class="tag no">No</span></td>
-  <td><code>build</code> and <code>layout</code> see only base vectors. Queries arrive only in <code>serve</code>. You can learn
-  from them online (see "online adaptation" below).</td></tr>
-<tr><td>Custom compression or bit packing (4-bit codes, delta coding, mixed precision)</td><td><span class="tag yes">Yes</span></td>
-  <td>HBF pages are raw bytes (<code>uint8[P, 4096]</code>), so pack anything. Decoding in <code>serve</code> is billed as tensor ops.</td></tr>
-<tr><td>Replicating data (hot records on several pages or channels)</td><td><span class="tag yes">Yes</span></td>
-  <td>HBF capacity is 3× the data size per HBF position, so with 4 HBF positions you have about 12× the data size.</td></tr>
-<tr><td>Changing the index during serving (insert, delete, rebuild)</td><td><span class="tag no">No</span></td>
-  <td>HBF pages are read-only in <code>serve</code>; HBF writes are not simulated. Dynamic updates are planned work.</td></tr>
-</table>
+<figure>
+<svg viewBox="0 0 860 400" role="img" aria-label="Platform diagram: a GPU in the centre; HBM positions on the left with their own links; HBF stacks on the right, each with a base die holding SRAM, a timer and the link, and channels that fan out to dies and banks, each bank with two page buffers.">
+  <style>
+    .t { font: 13px -apple-system, "Segoe UI", Roboto, Arial, sans-serif; fill: var(--fg); }
+    .s { font: 11.5px -apple-system, "Segoe UI", Roboto, Arial, sans-serif; fill: var(--muted); }
+    .b { stroke: var(--d-edge); stroke-width: 1.2; }
+    .l { stroke: var(--d-edge); stroke-width: 1.6; fill: none; }
+  </style>
+  <rect class="b" x="300" y="130" width="170" height="130" rx="8" fill="var(--d-gpu)"/>
+  <text class="t" x="385" y="160" text-anchor="middle" font-weight="600">GPU</text>
+  <text class="s" x="385" y="182" text-anchor="middle">runs serve as one fused</text>
+  <text class="s" x="385" y="198" text-anchor="middle">kernel per wake;</text>
+  <text class="s" x="385" y="214" text-anchor="middle">your state lives on chip</text>
+  <text class="s" x="385" y="240" text-anchor="middle">(16 MiB at 100K)</text>
 
-<h3>Placement</h3>
-<table>
-<tr><th>Design</th><th></th><th>How, or why not</th></tr>
-<tr><td>Choose which bytes share a page (co-locate neighbours, page-aligned records)</td><td><span class="tag yes">Yes</span></td>
-  <td>You write <code>plan["pages"]</code> byte by byte.</td></tr>
-<tr><td>Choose which channel, die and bank a page lives on</td><td><span class="tag yes">Yes</span></td>
-  <td>Placement is a fixed formula of the page number and <code>plan["interleave"]</code> (see <a href="#placement">where a page lives</a>).
-  Order your pages to put them where you want; <code>ctx.mapping</code> confirms it in <code>serve</code>.</td></tr>
-<tr><td>Static tables in HBM (PQ codes, centroids, entry points, adjacency of hot nodes)</td><td><span class="tag yes">Yes</span></td>
-  <td><code>plan["hbm"]</code>, up to <code>spec["hbm_bytes"]</code> (5%–25% of the data size, drawn per seed).</td></tr>
-<tr><td>Per-channel scratchpad SRAM on the HBF base die</td><td><span class="tag part">Partly</span></td>
-  <td><code>plan["sram"]</code>; row r lives on channel r mod channels. The size per channel is drawn per seed from 0 to 2 MiB
-  and <b>can be 0</b>: a scheme that needs SRAM must work without it.</td></tr>
-<tr><td>Choosing the hardware (how many HBM vs HBF positions, tR, channel count)</td><td><span class="tag no">No</span></td>
-  <td>The platform and the device are fixed by the task. A scheme can read them (<code>ctx.spec()</code>) and adapt, but not change them.
-  To see how a scheme depends on HBM, run it on <code>--data clustered_m1</code> etc.</td></tr>
-</table>
+  <rect class="b" x="30" y="70" width="190" height="80" rx="6" fill="var(--d-hbm)"/>
+  <text class="t" x="125" y="98" text-anchor="middle" font-weight="600">HBM × m positions</text>
+  <text class="s" x="125" y="118" text-anchor="middle">plan["hbm"] tensors</text>
+  <text class="s" x="125" y="134" text-anchor="middle">5–25% of the data size</text>
+  <path class="l" d="M220 110 C 260 110, 260 165, 300 165"/>
+  <text class="s" x="232" y="100">ctx.hbm(...)</text>
 
-<h3>Serving and scheduling</h3>
-<table>
-<tr><th>Design</th><th></th><th>How, or why not</th></tr>
-<tr><td>Asynchronous reads, pipelining, speculation, prefetch</td><td><span class="tag yes">Yes</span></td>
-  <td><code>ctx.submit</code> returns at once; completions arrive in later <code>events</code>. Keep as many reads in flight as you like (up to 2<sup>21</sup>).</td></tr>
-<tr><td>Partial-page reads (read 64 B instead of 4 KiB)</td><td><span class="tag yes">Yes</span></td>
-  <td>64 B to 4 KiB, 64 B aligned, inside one page. A partial read still <b>senses the whole page</b>; it saves only link time.</td></tr>
-<tr><td>Batching and coalescing across queries</td><td><span class="tag yes">Yes</span></td>
-  <td>One <code>serve</code> call handles every open query; dedupe, sort and merge their reads however you like.</td></tr>
-<tr><td>Scheduling by physical location (per-unit ordering, avoiding bank conflicts)</td><td><span class="tag yes">Yes</span></td>
-  <td><code>ctx.mapping(pages)</code> gives channel, die and bank. The order you submit is the order requests reach each unit.</td></tr>
-<tr><td>Reusing a page that is still in a page buffer</td><td><span class="tag part">Partly</span></td>
-  <td>Each bank has 2 page buffers and a re-read of a buffered page is a hit (no sense). The replacement policy (LRU or FIFO)
-  is hidden and drawn per seed, so design for "soon after" rather than for one policy.</td></tr>
-<tr><td>Batch Read (dispatch now instead of waiting for the base-die timer)</td><td><span class="tag yes">Yes</span></td>
-  <td><code>ctx.submit(..., batch=True)</code>.</td></tr>
-<tr><td>Per-query control flow (priority queues, per-query beam width, early exit)</td><td><span class="tag yes">Yes</span></td>
-  <td>Inside <code>for i in ctx.lanes(n):</code> branches stay on the GPU. Outside a lane, every Python-value read-back is a sync.</td></tr>
-<tr><td>Timed wake-ups (wait for k completions or a deadline)</td><td><span class="tag yes">Yes</span></td>
-  <td><code>ctx.wait(count, timeout_us)</code>.</td></tr>
-<tr><td>Online adaptation (caches filled while serving, learned prefetch tables, statistics)</td><td><span class="tag yes">Yes</span></td>
-  <td>Reserve space in <code>layout</code>, fill it with <code>ctx.hbm_write</code> / <code>ctx.sram_write</code>, or keep
-  small things in <code>state</code>. Sizes are fixed by <code>layout</code>. Every effort level starts again from
-  <code>layout</code>'s contents.</td></tr>
-<tr><td>Refresh scheduling (when to pay read-disturb refresh)</td><td><span class="tag yes">Yes</span></td>
-  <td><code>plan["refresh"] = "scheme"</code>, then <code>ctx.debt()</code> and <code>ctx.refresh()</code>.</td></tr>
-<tr><td>Power-aware scheduling</td><td><span class="tag part">Partly</span></td>
-  <td>The budget and energy per sense are in <code>ctx.spec()</code>, so you can pace senses yourself. There is no call that
-  reports the budget's current level.</td></tr>
-<tr><td>Observing device queues or unit occupancy</td><td><span class="tag part">Partly</span></td>
-  <td>Only your own in-flight reads (<code>ctx.pending()</code>) and the clock (<code>ctx.now()</code>). Unit queues are not visible,
-  as on real hardware.</td></tr>
-</table>
+  <rect class="b" x="30" y="250" width="190" height="80" rx="6" fill="var(--soft)"/>
+  <text class="t" x="125" y="278" text-anchor="middle" font-weight="600">Host (CPU)</text>
+  <text class="s" x="125" y="298" text-anchor="middle">only wakes the GPU; no</text>
+  <text class="s" x="125" y="314" text-anchor="middle">storage, no compute for you</text>
+  <path class="l" d="M220 290 C 260 290, 260 230, 300 230" stroke-dasharray="4 3"/>
+  <text class="s" x="226" y="318">.item() = slow sync</text>
 
-<h3>Compute and platform</h3>
-<table>
-<tr><th>Design</th><th></th><th>How, or why not</th></tr>
-<tr><td>Any tensor arithmetic on the GPU (distances, GEMM, top-k, sort, scatter, bit ops)</td><td><span class="tag yes">Yes</span></td>
-  <td>Every torch op is billed from its shapes (<a href="#billing">section 7</a>).</td></tr>
-<tr><td>Lower precision for speed (fp16, bf16, int8)</td><td><span class="tag part">Partly</span></td>
-  <td>Smaller dtypes move fewer bytes, so memory-bound ops get cheaper. Flops are counted the same for every dtype: there is no
-  tensor-core speed-up.</td></tr>
-<tr><td>Custom CUDA kernels, operator fusion, warp-level tricks</td><td><span class="tag no">No</span></td>
-  <td>Only torch ops are billed. A wake already runs as one fused kernel (no launch cost per op), and <code>ctx.lanes</code> models
-  per-block code; nothing finer is modelled.</td></tr>
-<tr><td>Host CPU computation, host DRAM, an SSD tier</td><td><span class="tag no">No</span></td>
-  <td>The platform is GPU + HBM + HBF. Reading a value back to the host costs a sync and host-link bytes; there is no host-side storage.</td></tr>
-<tr><td>Multiple GPUs or nodes</td><td><span class="tag no">No</span></td><td>One GPU per platform.</td></tr>
-<tr><td>Filtered search, range search, a different k</td><td><span class="tag no">No</span></td>
-  <td>Every task is top-k with k = 10 under the dataset's metric.</td></tr>
-<tr><td>External libraries (faiss, numpy, scipy)</td><td><span class="tag no">No</span></td>
-  <td>Only <code>torch</code>, <code>F</code> (torch.nn.functional) and <code>math</code>, without imports (<a href="#language">section 9</a>).</td></tr>
-<tr><td>Randomness</td><td><span class="tag yes">Yes</span></td><td>Only through <code>ctx.uniform(*shape)</code>, which is seeded.</td></tr>
-</table>
+  <rect class="b" x="540" y="20" width="300" height="360" rx="8" fill="var(--d-hbf)"/>
+  <text class="t" x="690" y="44" text-anchor="middle" font-weight="600">HBF stack × (8 − m) positions</text>
+  <rect class="b" x="560" y="58" width="260" height="70" rx="5" fill="var(--bg)"/>
+  <text class="t" x="690" y="78" text-anchor="middle">base die</text>
+  <text class="s" x="690" y="96" text-anchor="middle">SRAM per channel (plan["sram"], 0–2 MiB)</text>
+  <text class="s" x="690" y="112" text-anchor="middle">timer, Batch Read, link to the GPU</text>
+  <path class="l" d="M470 195 L 560 93"/>
+  <text class="s" x="480" y="222">ctx.submit</text>
+  <text class="s" x="480" y="238">ctx.sram</text>
 
-<div class="box">If your design is not in these tables: it is expressible if it can be written as (1) a data structure
-computed from the base vectors, (2) a placement of bytes into HBF pages, HBM tensors and SRAM tensors, and (3) a
-<code>serve</code> state machine that uses only the <a href="#ctx">ctx methods</a> and torch ops.</div>
+  <text class="t" x="572" y="152">channel 0</text>
+  <text class="t" x="572" y="268">channel 1 …</text>
+  <rect class="b" x="560" y="160" width="120" height="90" rx="4" fill="var(--bg)"/>
+  <text class="s" x="620" y="178" text-anchor="middle">die 0</text>
+  <rect class="b" x="572" y="186" width="44" height="54" rx="3" fill="var(--soft)"/>
+  <text class="s" x="594" y="204" text-anchor="middle">bank</text>
+  <text class="s" x="594" y="220" text-anchor="middle">2 page</text>
+  <text class="s" x="594" y="234" text-anchor="middle">buffers</text>
+  <rect class="b" x="624" y="186" width="44" height="54" rx="3" fill="var(--soft)"/>
+  <text class="s" x="646" y="216" text-anchor="middle">bank …</text>
+  <rect class="b" x="700" y="160" width="120" height="90" rx="4" fill="var(--bg)"/>
+  <text class="s" x="760" y="178" text-anchor="middle">die 1 …</text>
+  <text class="s" x="760" y="210" text-anchor="middle">pages of 4 KiB</text>
+  <text class="s" x="760" y="226" text-anchor="middle">plan["pages"]</text>
+  <rect class="b" x="560" y="276" width="260" height="40" rx="4" fill="var(--bg)"/>
+  <text class="s" x="690" y="300" text-anchor="middle">same structure on every channel</text>
+  <text class="s" x="690" y="344" text-anchor="middle">a bank senses one page at a time (tR);</text>
+  <text class="s" x="690" y="360" text-anchor="middle">different banks sense in parallel</text>
+</svg>
+<figcaption>The platform. You place data in the three tiers (<code>plan["hbm"]</code>, <code>plan["sram"]</code>,
+<code>plan["pages"]</code>) and read it back in <code>serve</code> through <code>ctx</code>.</figcaption>
+</figure>
 
-<!-- ============================================================ -->
-<h2 id="file">3. The scheme file</h2>
-<pre><code>"""One sentence describing the idea."""
-
-KNOBS = {                         # name: (default, low, high, scale)
-    "nlist":    (1024, 8, 16384, "int"),
-    "probe_lo": (4, 1, 256, "int"),
-    "probe_hi": (48, 1, 1024, "int"),
-}
-
-def build(vectors, ctx): ...       # exactly 2 positional arguments
-def layout(index, vectors, ctx): ...   # exactly 3
-def serve(state, events, ctx): ...     # exactly 3
-def helper(x, y): ...              # any other top-level function, called by name</code></pre>
-<ul>
-  <li>Allowed at module level: a docstring, one <code>KNOBS</code> literal, top-level <code>def</code>s. Nothing else.</li>
-  <li><b>Knobs:</b> <code>(default, low, high, scale)</code> with scale <code>"int"</code>, <code>"linear"</code> or
-    <code>"log"</code> (needs low &gt; 0). Read a knob only as <code>ctx.knobs["name"]</code> with a literal name; reading an
-    undeclared knob is an error. <code>--set name=value</code> overrides one (clamped to its range).</li>
-  <li><b>The <code>*_hi</code> convention:</b> <code>--wide</code> sets every knob whose name ends in <code>_hi</code> to its
-    declared maximum. Name the top of your effort range <code>..._hi</code> so this works.</li>
-  <li><b>Caching:</b> <code>build</code> and <code>layout</code> results are cached by the code of the functions each one reaches
-    and the knobs those read. Changing <code>serve</code>, or a knob only <code>serve</code> reads, never rebuilds the index.
-    Docstrings and comments do not affect the cache key.</li>
-  <li>Check a file without running it: <code>python3 -m hbf_eval.bench check my/scheme.py</code> (lists knobs and which stage reads each).</li>
-</ul>
-
-<!-- ============================================================ -->
-<h2 id="build">4. <code>build(vectors, ctx) → index</code></h2>
-<div class="sig"><code>def build(vectors, ctx): return {name: tensor, ...}</code></div>
-<dl>
-  <dt><code>vectors</code></dt>
-  <dd><code>float32[n, D]</code>: the base vectors (a copy; you may modify it). For uint8 datasets (SIFT) the values are the
-    integers 0–255 stored as float32. For angular datasets the vectors are unit-normalised, so L2 order equals angular order.</dd>
-  <dt><code>ctx.spec()</code></dt>
-  <dd><table>
-    <tr><th>Field</th><th>Meaning</th></tr>
-    <tr><td><code>n</code></td><td>number of base vectors (100 000 or 1 000 000)</td></tr>
-    <tr><td><code>dim</code></td><td>dimension D (128 for SIFT, 96 for DEEP)</td></tr>
-    <tr><td><code>metric</code></td><td><code>"l2"</code> or <code>"angular"</code></td></tr>
-    <tr><td><code>k</code></td><td>neighbours to return: 10</td></tr>
-    <tr><td><code>vector_bytes</code></td><td>bytes of one vector in its native dtype (128 for SIFT uint8, 384 for DEEP float32)</td></tr>
-    <tr><td><code>dtype</code></td><td><code>"uint8"</code> or <code>"float32"</code>: the dataset's native type</td></tr>
-  </table></dd>
-  <dt><code>ctx.knobs</code></dt><dd>dict of knob values (read as <code>ctx.knobs["name"]</code>).</dd>
-  <dt><code>ctx.uniform(*shape)</code></dt><dd>float32 uniform samples in (0, 1), seeded by the build's cache key. The only source of randomness.</dd>
-  <dt><code>ctx.effort</code></dt><dd>not available here (an error): the index is shared by every effort level.</dd>
-</dl>
-<h4>Returns</h4>
-<p><code>index</code>: a dict <code>{str: torch.Tensor}</code> with any content. Total size at most 16 × the data size (n × vector_bytes).</p>
-<h4>Cost and limits</h4>
-<ul>
-  <li>Not billed and not in the score. Its wall time is reported as <code>cost.build_seconds</code>.</li>
-  <li>Wall-clock budget for the whole job (build, layout and all tasks): 1 h at 100K, 2 h at 1M. At 1M the process must also
-  stay under 10 GB resident memory.</li>
-</ul>
-
-<!-- ============================================================ -->
-<h2 id="layout">5. <code>layout(index, vectors, ctx) → plan</code></h2>
-<div class="sig"><code>def layout(index, vectors, ctx): return {"pages": ..., "hbm": {...}, "sram": {...}, "interleave": g}</code></div>
-<dl>
-  <dt><code>index</code></dt><dd>what <code>build</code> returned (a copy).</dd>
-  <dt><code>vectors</code></dt><dd>the base vectors again, <code>float32[n, D]</code>.</dd>
-  <dt><code>ctx</code></dt><dd>as in <code>build</code>, and <code>ctx.spec()</code> adds the platform and the device datasheet below.
-    Layout runs once per task and seed, so it can adapt to the device.</dd>
-</dl>
-
-<h3 id="layout-spec">ctx.spec() fields in layout</h3>
-<p>All of <code>build</code>'s fields, plus the following. "Per position" means per HBF stack (or HBM stack) around the GPU.
-At 100K each position keeps 1 of a stack's 16 channels, at 1M 2 of 16; bandwidth and power are scaled by the same factor.</p>
-<table>
-<tr><th>Field</th><th>Meaning</th><th>Values</th></tr>
-<tr><td><code>m</code></td><td>HBM positions out of 8; the other 8 − m are HBF</td><td>4 in the standard tasks</td></tr>
-<tr><td><code>positions</code></td><td>positions around the GPU</td><td>8</td></tr>
-<tr><td><code>channels_per_position</code></td><td>HBF channels per position</td><td>1 (100K), 2 (1M)</td></tr>
-<tr><td><code>units_per_channel</code></td><td>parallel sense units (dies × banks) per channel</td><td>A: 128, B: 32, C: 64, D: 64</td></tr>
-<tr><td><code>dies_per_channel</code></td><td>dies per channel</td><td>A, C, D: 4; B: 1</td></tr>
-<tr><td><code>banks_per_die</code></td><td>banks (planes) per die</td><td>A, B: 32; C, D: 16</td></tr>
-<tr><td><code>tR_us</code></td><td>nominal page sense time (real senses add ±10% jitter)</td><td>A: 20, B: 4, C: 4, D: 1.5</td></tr>
-<tr><td><code>channel_GBps</code></td><td>link bandwidth per channel</td><td>A: 24, B: 96, C, D: 192</td></tr>
-<tr><td><code>coredie_channels</code></td><td>core-die channels per channel (die → base die)</td><td>A, C, D: 2; B: 1</td></tr>
-<tr><td><code>power_W_per_position</code></td><td>power budget of one HBF position (30 W per full stack, scaled)</td><td>1.875 (100K), 3.75 (1M)</td></tr>
-<tr><td><code>sense_uJ</code></td><td>energy of one page sense</td><td>A, C: 0.27; B: 0.22; D: 0.039</td></tr>
-<tr><td><code>program_uJ</code>, <code>program_us</code></td><td>energy and time of one page program (refresh)</td><td>3.28 µJ; A, C, D: 200 µs, B: 75 µs</td></tr>
-<tr><td><code>program_holds</code></td><td>what a program occupies</td><td><code>"die"</code> (A, C, D) or <code>"plane"</code> (B)</td></tr>
-<tr><td><code>pages_per_block</code></td><td>pages per erase block</td><td>256</td></tr>
-<tr><td><code>refresh_slack_pages</code></td><td>refresh debt a plane may owe before its reads start retrying</td><td>4</td></tr>
-<tr><td><code>hbm_GBps_per_position</code></td><td>HBM bandwidth per position (1 TB/s per stack, scaled)</td><td>62.5 (100K), 125 (1M)</td></tr>
-<tr><td><code>hbm_latency_us</code></td><td>HBM access latency</td><td>0.1</td></tr>
-<tr><td><code>hbm_bytes</code></td><td><b>your HBM budget</b> (all positions together)</td><td>m/8 × f × data size, f drawn in [0.1, 0.5] per seed: 5%–25% of the data at m = 4</td></tr>
-<tr><td><code>hbm_bytes_per_position</code></td><td>the same per position</td><td></td></tr>
-<tr><td><code>hbf_pages_per_position</code></td><td>HBF capacity of one position, in 4 KiB pages</td><td>3 × data size / 4096</td></tr>
-<tr><td><code>sram_bytes_per_channel</code></td><td><b>your SRAM budget</b> per channel</td><td>0 to 2 MiB in 64 KiB steps, drawn per seed</td></tr>
-<tr><td><code>sram_latency_us</code></td><td>SRAM access latency</td><td>0.05</td></tr>
-<tr><td><code>mocs</code></td><td>in-flight cap per channel at the base die; reads beyond it wait on the host side</td><td>256 to 16 384, drawn per seed</td></tr>
-</table>
-<p><b>Not visible to a scheme</b> (firmware details a host cannot read): the page-buffer replacement policy (LRU or FIFO), the
-base-die timer (0–2 µs), the tR jitter, the read-disturb threshold and the retry probability. Which product profile (A–D) a task
-uses depends on the task and seed; read the fields, not the profile letter.</p>
-
-<h3 id="plan">The plan</h3>
-<table>
-<tr><th>Key</th><th>Type</th><th>Meaning and limits</th></tr>
-<tr><td><code>"pages"</code></td><td><code>uint8[P, 4096]</code>, P ≥ 1</td>
-  <td>The HBF image: page p holds exactly these bytes. P ≤ (8 − m) × <code>hbf_pages_per_position</code>.</td></tr>
-<tr><td><code>"hbm"</code></td><td><code>{str: tensor}</code></td>
-  <td>Tensors placed in HBM, read in <code>serve</code> with <code>ctx.hbm(name, rows)</code>. Total bytes ≤ <code>hbm_bytes</code>.
-  Any dtype and shape; the first dimension is the row.</td></tr>
-<tr><td><code>"sram"</code></td><td><code>{str: tensor}</code></td>
-  <td>Tensors placed in the base-die SRAM. Row r lives on channel r mod channels. For each channel, the sum over tensors of
-  ⌈rows / channels⌉ × row bytes must be ≤ <code>sram_bytes_per_channel</code>. Use <code>{}</code> for none.</td></tr>
-<tr><td><code>"interleave"</code></td><td><code>int</code>, 1 to 2<sup>20</sup></td>
-  <td>How many consecutive pages go to one channel before moving to the next (see below).</td></tr>
-<tr><td><code>"refresh"</code> (optional)</td><td><code>"default"</code> or <code>"scheme"</code></td>
-  <td><code>"default"</code>: the host pays read-disturb refresh whenever a die is idle and owes a page, and at once when a plane
-  owes more than <code>refresh_slack_pages</code>. <code>"scheme"</code>: refresh is paid only when <code>serve</code> calls
-  <code>ctx.refresh</code>; the device still forces payment above 2 × <code>refresh_slack_pages</code>.</td></tr>
-</table>
-<p>No other keys are allowed. Writing the pages is free: the image is on the device before the first query, and program time
-and wear for loading it are not modelled.</p>
-
-<h3 id="placement">Where a page lives</h3>
-<p>With C HBF channels in total (C = (8 − m) × <code>channels_per_position</code>: 4 at 100K, 8 at 1M), interleave g, B banks per die
-and Dd dies per channel:</p>
-<pre><code>channel = (p // g) % C
-local   = g * (p // (g * C)) + p % g        # the page's index within its channel
-die     = (local // B) % Dd
-bank    = local % B</code></pre>
-<p>So with g = 1, consecutive pages go round-robin over channels; with a large g, a run of g pages stays on one channel. Within a
-channel, consecutive local pages go to consecutive banks. Two pages on the same (channel, die, bank) are sensed one after the
-other; pages on different banks are sensed in parallel.</p>
-
-<!-- ============================================================ -->
-<h2 id="serve">6. <code>serve(state, events, ctx) → state</code></h2>
-<div class="sig"><code>def serve(state, events, ctx): ...; return state</code></div>
-
-<h3 id="loop">The wake loop</h3>
+<p>Five facts about HBF shape every design:</p>
 <ol>
-  <li>The run starts with N clients (<code>ctx.spec()["clients"]</code>), each with one open query. A client sends its next
-    query the moment its last one is answered (closed loop), until the task's query total is reached.</li>
-  <li>At each wake the host calls <code>serve(state, events, ctx)</code>. <code>events</code> holds everything that arrived since the
-    last wake: new queries and completed HBF reads.</li>
-  <li>Inside <code>serve</code>, every ctx call and torch op moves the simulated clock forward. HBF reads you submit run on the device
-    meanwhile.</li>
-  <li>After <code>serve</code> returns, the host sleeps until the wake condition holds: by default one event (a completion or a
-    new query); <code>ctx.wait(count, timeout_us)</code> changes it for the next wake only. If nothing is in flight the host
-    wakes at once.</li>
-  <li>The run ends when every query is answered. If no read is in flight and <code>serve</code> answers nothing for 1000 wakes
-    in a row, the run fails as a deadlock.</li>
+  <li><b>A read senses a whole 4 KiB page.</b> Reading 64 bytes or 4096 bytes costs the same sense time (tR, 1.5–20 µs depending
+    on the device). Only the link transfer gets shorter. So put things you need together on the same page.</li>
+  <li><b>A bank senses one page at a time.</b> Two reads to pages on the same bank wait for each other; reads to different banks
+    proceed in parallel. There are 32–128 banks per channel. So spread concurrent reads across banks.</li>
+  <li><b>Each bank keeps its last 2 pages in buffers.</b> Reading a page that is still in a buffer is a hit: no sense at all.
+    So if several queries need the same page, issue those reads close together.</li>
+  <li><b>Every sense costs energy from a fixed power budget.</b> On some devices the budget, not the bank count, limits how many
+    senses per second you get. So fewer senses is better even when banks are idle.</li>
+  <li><b>Reads are asynchronous.</b> You issue a read, keep computing, and its data arrives later. A query that needs the result of
+    one read to decide the next (a graph walk) waits a full read time per step.</li>
 </ol>
-<p>So <code>serve</code> is a state machine: a read issued now completes in a later call. Use the tag you attach to each read to
-find out, when its data comes back, which query and which item it belonged to.</p>
 
-<h3 id="events">events</h3>
+<table>
+<tr><th>Size of the platform</th><th>100K vectors</th><th>1M vectors</th></tr>
+<tr><td>HBF channels in total (4 HBF positions)</td><td>4</td><td>8</td></tr>
+<tr><td>Banks per channel</td><td colspan="2">32, 64 or 128 depending on the device</td></tr>
+<tr><td>HBM bandwidth (all positions)</td><td>250 GB/s</td><td>500 GB/s</td></tr>
+<tr><td>HBM capacity for you</td><td colspan="2">5%–25% of the data size (drawn per seed)</td></tr>
+<tr><td>HBF capacity for you</td><td colspan="2">about 12 × the data size</td></tr>
+<tr><td>GPU compute (billing)</td><td colspan="2">7.5 TFLOP/s, 10 TB/s on-chip</td></tr>
+</table>
+
+<h2 id="halves">2. Offline and online</h2>
+<p>A scheme is three functions. The first two run once, before any query, and are free; the third runs while queries are
+being served, and is what the score measures.</p>
+<table>
+<tr><th></th><th><code>build(vectors, ctx)</code></th><th><code>layout(index, vectors, ctx)</code></th><th><code>serve(state, events, ctx)</code></th></tr>
+<tr><td>When</td><td>once per dataset</td><td>once per task and seed (it sees the device)</td><td>at every wake, thousands of times</td></tr>
+<tr><td>Sees the vectors</td><td>yes</td><td>yes</td><td><b>no</b></td></tr>
+<tr><td>Timed</td><td>no</td><td>no</td><td><b>yes</b></td></tr>
+<tr><td>Job</td><td>compute the index (clusters, graph, codes, …)</td><td>decide which bytes go where</td><td>answer queries using only what layout placed</td></tr>
+<tr><td>Returns</td><td><code>{name: tensor}</code></td><td>the plan</td><td>your state</td></tr>
+</table>
+<div class="box"><b>Why <code>serve</code> cannot see the vectors:</b> on the real machine the vectors are in flash. If
+<code>serve</code> could read <code>vectors[i]</code> directly, it would get data for free that really costs a flash read. So
+everything <code>serve</code> needs must be placed by <code>layout</code> and fetched through <code>ctx</code>, which charges
+the real cost.</div>
+
+<h2 id="ctx-intro">3. What <code>ctx</code> is</h2>
+<p><code>ctx</code> ("context") is an object the evaluator passes into each of your three functions. You never create it, never
+store it, and cannot change it. It is your only door to the outside: it tells you about the dataset and the device, gives you
+your knob values and random numbers, and in <code>serve</code> it is how you read memory, issue flash reads and answer queries.
+Every <code>ctx</code> call in <code>serve</code> charges simulated time.</p>
+<p>Think of it as the API of the machine. A different <code>ctx</code> is passed to each function, with different abilities:</p>
+<table>
+<tr><th>Member</th><th>What it gives you</th><th>build</th><th>layout</th><th>serve</th></tr>
+<tr><td><code>ctx.spec()</code></td><td>a dict of facts: dataset, then device, then run</td><td>dataset</td><td>+ device</td><td>+ run</td></tr>
+<tr><td><code>ctx.knobs["name"]</code></td><td>the value of one of your declared knobs</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td><code>ctx.uniform(*shape)</code></td><td>seeded random numbers in (0, 1)</td><td>✓</td><td>✓</td><td>✓ (billed)</td></tr>
+<tr><td><code>ctx.effort</code></td><td>how hard to search right now, 0 to 1</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td><code>ctx.hbm(name, rows)</code> / <code>ctx.sram(name, rows)</code></td><td>read rows of a tensor you placed</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td><code>ctx.hbm_write</code> / <code>ctx.sram_write</code></td><td>overwrite rows of a tensor you placed</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td><code>ctx.submit(...)</code></td><td>issue HBF page reads</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td><code>ctx.finish(qids, ids)</code></td><td>answer queries</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td><code>ctx.wait(count, timeout_us)</code></td><td>when to wake you next</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td><code>ctx.lanes(n)</code></td><td>a loop whose body runs per query on the GPU</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td><code>ctx.mapping(pages)</code></td><td>channel, die and bank of pages</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td><code>ctx.pending()</code>, <code>ctx.now()</code></td><td>your reads in flight; the clock</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td><code>ctx.debt()</code>, <code>ctx.refresh(...)</code></td><td>flash refresh owed; pay it</td><td>–</td><td>–</td><td>✓</td></tr>
+</table>
+<pre><code>def serve(state, events, ctx):
+    s = ctx.spec()                 # a dict: s["k"] == 10, s["pages"] == how many pages you placed, ...
+    e = ctx.effort                 # e.g. 0.5 in the middle of the effort sweep
+    cent = ctx.hbm("cent")         # the tensor layout put under plan["hbm"]["cent"], fetched from HBM (billed)
+    ...</code></pre>
+
+<h2 id="time">4. How simulated time moves</h2>
+<p>Nothing in <code>serve</code> is measured with a stopwatch. The evaluator keeps a simulated clock and moves it by rules:</p>
+<ul>
+  <li>A <b>wake</b> starts 1.2 µs after the moment the host woke (the cost of a host round).</li>
+  <li>Each <b>torch operation</b> moves the clock by its billed time (computed from tensor shapes, <a href="#billing">section 27</a>).</li>
+  <li>Each <b>ctx call</b> moves it by its cost: <code>ctx.hbm</code> waits for the transfer; <code>ctx.submit</code> only hands
+    the reads to the device and returns.</li>
+  <li>Meanwhile the <b>device</b> works on the reads you submitted, in parallel with your code.</li>
+  <li>When <code>serve</code> returns, the host sleeps until something happens (a read completes, a query arrives), then wakes you again.</li>
+</ul>
+<p>A query's latency is the clock at <code>ctx.finish</code> minus the clock when it arrived. Throughput is queries per simulated second.</p>
+<div class="box">Consequence: a Python loop that would take a second on your laptop may cost almost nothing (if it does no
+torch work), and one <code>cdist</code> over a huge matrix may cost a lot. What counts is the billed work, not your laptop's
+speed. The real wall-clock time only matters for the job's time limit (1 h at 100K).</div>
+
+<h2 id="bytes">5. Bytes, ids and tensors</h2>
+<ul>
+  <li><b>Everything is a torch tensor.</b> Ids, page numbers, tags and offsets are <code>torch.int64</code>. Pages and read data are
+    <code>torch.uint8</code> (raw bytes). Vectors and distances are usually <code>torch.float32</code>.</li>
+  <li><b>Flash holds bytes, not vectors.</b> To store a float32 vector, reinterpret its 4 bytes per value:
+    <code>v.contiguous().view(torch.uint8)</code>. To read it back: <code>raw.contiguous().view(torch.float32)</code>.
+    The same trick stores an int32 id in 4 bytes.</li>
+  <li><b>Batch everything.</b> One tensor operation over all open queries costs about the same as one for a single query. Write
+    <code>serve</code> as operations over tensors whose first dimension is "all open queries" or "all completed reads",
+    not as Python loops.</li>
+  <li><b>Reading a tensor into Python is expensive.</b> <code>int(x)</code>, <code>x.item()</code>, <code>x.tolist()</code>,
+    <code>bool(x)</code>, <code>if x:</code> on a tensor all cost a host sync (0.5 µs plus the bytes). Use them a few times
+    per wake, not per query.</li>
+</ul>
+
+<!-- ================================================================== PART II -->
+<div class="partlabel">Part II · Worked example</div>
+
+<h2 id="tut-idea">6. From idea to plan</h2>
+<p>We will write <b>IVF-Flat</b> from scratch: cluster the vectors with k-means; at query time, find the few clusters
+nearest to the query and compare the query with every vector in them. It is not the fastest scheme, but it uses every part
+of the interface. The finished file is <code>docs/tutorial_ivf.py</code> (<a href="#tut-listing">section 13</a>).</p>
+<p>The first design step is to split the idea into "done once" and "done per query", and decide where each piece of data lives:</p>
+<table>
+<tr><th>Piece of the idea</th><th>Once or per query?</th><th>Function</th><th>Where the data lives</th></tr>
+<tr><td>k-means centroids, each vector's cluster</td><td>once</td><td><code>build</code></td><td>centroids: HBM (small, read at every query)</td></tr>
+<tr><td>vectors grouped by cluster, packed into pages</td><td>once</td><td><code>layout</code></td><td>HBF pages (large)</td></tr>
+<tr><td>where each cluster's pages start and end</td><td>once</td><td><code>layout</code></td><td>HBM (small table)</td></tr>
+<tr><td>find the query's nearest clusters</td><td>per query</td><td><code>serve</code></td><td>reads centroids from HBM</td></tr>
+<tr><td>read those clusters' pages, compute distances, keep the best k</td><td>per query</td><td><code>serve</code></td><td>reads HBF pages</td></tr>
+</table>
+
+<h2 id="tut-knobs">7. KNOBS</h2>
+<p>Knobs are the numbers you might want to tune without editing code. Each is <code>name: (default, low, high, scale)</code>.</p>
+<pre><code>KNOBS = {
+    "nlist": (256, 8, 4096, "int"),        # number of clusters
+    "kmeans_iters": (8, 1, 30, "int"),     # Lloyd iterations in build
+    "nprobe_lo": (2, 1, 256, "int"),       # clusters probed at effort 0
+    "nprobe_hi": (32, 1, 1024, "int"),     # clusters probed at effort 1 (--wide opens it to 1024)
+}</code></pre>
+<ul>
+  <li><code>scale</code> is <code>"int"</code> (whole numbers), <code>"linear"</code> or <code>"log"</code> (needs low &gt; 0). It tells
+    tools how to vary the knob; it also rounds <code>"int"</code> knobs.</li>
+  <li><code>--set nlist=1024</code> on the command line overrides a default (clamped to [low, high]).</li>
+  <li>A pair <code>x_lo</code> / <code>x_hi</code> is the convention for "the range <code>ctx.effort</code> sweeps": at effort 0 we probe
+    <code>nprobe_lo</code> clusters, at effort 1 <code>nprobe_hi</code>. <code>--wide</code> sets every <code>*_hi</code> knob to its
+    maximum, to check whether a recall level is unreachable or just outside the default range.</li>
+</ul>
+
+<h2 id="tut-build">8. Writing <code>build</code></h2>
+<pre><code>def build(vectors, ctx):
+    n = vectors.shape[0]
+    K = min(ctx.knobs["nlist"], n)
+    cent = vectors[torch.argsort(ctx.uniform(n))[:K]].clone()      # K random vectors as the first centroids
+    for it in range(ctx.knobs["kmeans_iters"]):
+        assign = nearest(vectors, cent)
+        sums = torch.zeros_like(cent).index_add_(0, assign, vectors)
+        count = torch.bincount(assign, minlength=K).to(vectors.dtype)
+        cent = torch.where(count[:, None] > 0, sums / count.clamp(min=1.)[:, None], cent)
+    return {"cent": cent, "assign": nearest(vectors, cent)}</code></pre>
+<dl>
+  <dt><code>vectors</code></dt><dd>A <code>float32</code> tensor of shape <code>[n, D]</code>: 100 000 × 128 for SIFT. SIFT values are whole
+    numbers 0–255 stored as floats.</dd>
+  <dt><code>ctx.knobs["nlist"]</code></dt><dd>256 by default. It must be a literal string, and the knob must be declared.</dd>
+  <dt><code>ctx.uniform(n)</code></dt><dd>n random floats. <code>argsort</code> of random numbers is a random permutation: this is how you draw a
+    random sample, since <code>torch.randperm</code> is not allowed (all randomness must come from <code>ctx</code> so runs are repeatable).</dd>
+  <dt>Return value</dt><dd>Any dict of tensors. Here <code>cent</code> is <code>float32[256, 128]</code> and <code>assign</code> is
+    <code>int64[100000]</code>. It is cached on disk, so a second run with the same code and knobs skips <code>build</code>.</dd>
+</dl>
+<p><code>nearest</code> is a helper we define ourselves: a scheme may have up to 60 top-level functions that call each other by name.</p>
+
+<h2 id="tut-layout">9. Writing <code>layout</code></h2>
+<p><code>layout</code> turns the index into bytes on the device. First decide the <b>record format</b>: what one stored item looks like.</p>
+<figure>
+<svg viewBox="0 0 860 150" role="img" aria-label="One page of 4096 bytes holds 21 records of 192 bytes for SIFT: a 4-byte id, 128 bytes of vector, padding to 192; the last 64 bytes of the page are unused.">
+  <style>.t2{font:12.5px -apple-system,"Segoe UI",Roboto,Arial,sans-serif;fill:var(--fg)}.s2{font:11.5px -apple-system,"Segoe UI",Roboto,Arial,sans-serif;fill:var(--muted)}</style>
+  <text class="t2" x="10" y="20" font-weight="600">One record (SIFT): 192 bytes</text>
+  <rect x="10" y="30" width="40" height="34" fill="var(--d-gpu)" stroke="var(--d-edge)"/>
+  <text class="s2" x="30" y="52" text-anchor="middle">id</text>
+  <rect x="50" y="30" width="400" height="34" fill="var(--d-hbm)" stroke="var(--d-edge)"/>
+  <text class="s2" x="250" y="52" text-anchor="middle">vector: 128 bytes (uint8)</text>
+  <rect x="450" y="30" width="186" height="34" fill="var(--soft)" stroke="var(--d-edge)"/>
+  <text class="s2" x="543" y="52" text-anchor="middle">padding to a multiple of 64</text>
+  <text class="s2" x="10" y="80">bytes 0–3: int32 id (−1 = empty slot)     4–131: vector     132–191: zero</text>
+  <text class="t2" x="10" y="108" font-weight="600">One page: 4096 bytes = 21 records × 192 + 64 unused</text>
+  <g>
+    <rect x="10" y="116" width="38" height="26" fill="var(--d-hbm)" stroke="var(--d-edge)"/>
+    <rect x="48" y="116" width="38" height="26" fill="var(--d-hbm)" stroke="var(--d-edge)"/>
+    <rect x="86" y="116" width="38" height="26" fill="var(--d-hbm)" stroke="var(--d-edge)"/>
+    <text class="s2" x="150" y="134">…</text>
+    <rect x="180" y="116" width="38" height="26" fill="var(--d-hbm)" stroke="var(--d-edge)"/>
+    <rect x="218" y="116" width="14" height="26" fill="var(--soft)" stroke="var(--d-edge)"/>
+    <text class="s2" x="245" y="134">records of one cluster only; a new cluster starts on a new page</text>
+  </g>
+</svg>
+</figure>
+<p>We store the id next to the vector because <code>serve</code> needs to know which vector it just read: it cannot look
+anything up in <code>index</code>. Records are 64-byte aligned because HBF reads are in units of 64 bytes.</p>
+<pre><code>def layout(index, vectors, ctx):
+    s = ctx.spec()
+    n, K = vectors.shape[0], index["cent"].shape[0]
+    size = record_size(s)                     # 192 for SIFT, 448 for DEEP (4 + 384 rounded up)
+    per = 4096 // size                        # records per page: 21 for SIFT
+    assign = index["assign"]
+    order = torch.argsort(assign, stable=True)          # vector ids grouped by cluster
+    count = torch.bincount(assign, minlength=K)         # vectors per cluster
+    npages = (count + per - 1) // per                   # pages per cluster
+    first_page = torch.cumsum(npages, 0) - npages       # first page of each cluster
+    first_rec = torch.cumsum(count, 0) - count
+    a = assign[order]
+    pos = torch.arange(n) - first_rec[a]                # position inside its cluster
+    slot = (first_page[a] + pos // per) * per + pos % per   # page * per + slot in page
+    P = int(npages.sum())
+    body = torch.zeros(P * per, size, dtype=torch.uint8)
+    body[:, :4] = 255                                   # id -1 marks an empty slot
+    body[slot, :4] = order.to(torch.int32).view(torch.uint8).reshape(n, 4)
+    body[slot, 4:4 + s["vector_bytes"]] = pack_rows(vectors[order], s)
+    pages = torch.zeros(P, 4096, dtype=torch.uint8)
+    pages[:, :per * size] = body.reshape(P, per * size)
+    lpage = torch.cat([first_page, first_page[-1:] + npages[-1:]])   # cluster c = pages lpage[c] .. lpage[c+1]-1
+    return {"pages": pages, "hbm": {"cent": index["cent"], "lpage": lpage}, "sram": {}, "interleave": 1}</code></pre>
+<dl>
+  <dt><code>ctx.spec()</code> in layout</dt><dd>Everything <code>build</code> saw (<code>n</code>, <code>dim</code>, <code>k</code>,
+    <code>vector_bytes</code>, <code>dtype</code>, …) plus the device's datasheet (<code>hbm_bytes</code>, <code>tR_us</code>, …,
+    <a href="#ref-layout">section 15</a>). We only need <code>vector_bytes</code> and <code>dtype</code> here.</dd>
+  <dt><code>"pages"</code></dt><dd><code>uint8[P, 4096]</code>: page p on the device holds exactly row p. For SIFT at 100K this is
+    about 5 000 pages (20 MB), well under the HBF capacity.</dd>
+  <dt><code>"hbm"</code></dt><dd>Two tensors: <code>cent</code> (<code>float32[256, 128]</code>, 128 KiB) and <code>lpage</code>
+    (<code>int64[257]</code>). Their total must fit in <code>s["hbm_bytes"]</code>; at 100K SIFT that is at least 640 KB, so we fit.
+    A scheme with bigger tables should check <code>s["hbm_bytes"]</code> and shrink (fewer centroids, fp16) when it does not fit.</dd>
+  <dt><code>"sram"</code></dt><dd>We use none: <code>{}</code>.</dd>
+  <dt><code>"interleave": 1</code></dt><dd>Consecutive pages go to consecutive channels, so one cluster's pages spread over all
+    channels and are read in parallel (<a href="#ref-plan">section 16</a>).</dd>
+</dl>
+
+<h2 id="tut-serve">10. Writing <code>serve</code></h2>
+<p><code>serve</code> is called at every wake. It does not handle one query from start to end; it handles <i>whatever happened
+since the last wake</i>: some reads completed, some new queries arrived. So it is a <b>state machine</b>: the state remembers,
+for every open query, how far it has got.</p>
+
+<h4>Step 1: design the state</h4>
+<p>One row per open query, as tensors with the same first dimension:</p>
 <table>
 <tr><th>Key</th><th>Type</th><th>Meaning</th></tr>
-<tr><td><code>"qids"</code></td><td><code>int64[a]</code></td><td>ids of the queries that arrived since the last wake</td></tr>
-<tr><td><code>"queries"</code></td><td><code>float32[a, D]</code></td><td>their vectors</td></tr>
-<tr><td><code>"tags"</code></td><td><code>int64[c]</code></td><td>the tags of the reads that completed, in completion order</td></tr>
-<tr><td><code>"nbytes"</code></td><td><code>int64[c]</code></td><td>the size of each completed read</td></tr>
-<tr><td><code>"data"</code></td><td><code>uint8[c, W]</code></td><td>the bytes read; W = the largest size among them, shorter reads padded with zeros</td></tr>
+<tr><td><code>qid</code></td><td><code>int64[Q]</code></td><td>the query's id (rows kept in increasing qid order)</td></tr>
+<tr><td><code>q</code></td><td><code>float32[Q, D]</code></td><td>the query vector (we need it when pages come back)</td></tr>
+<tr><td><code>bd</code>, <code>bi</code></td><td><code>float32[Q, k]</code>, <code>int64[Q, k]</code></td><td>best k distances and ids so far</td></tr>
+<tr><td><code>left</code></td><td><code>int64[Q]</code></td><td>page reads still in flight; 0 means "done, answer it"</td></tr>
 </table>
 
-<h3 id="state">state</h3>
+<h4>Step 2: design the tag</h4>
+<p>Every read carries a <b>tag</b>, an integer you choose; the completion comes back with the same tag. The tag must tell you
+everything you need to process the data. Here: which query, and which page. We encode
+<code>tag = qid × P + page</code> (P = number of pages), and decode with <code>tag // P</code> and <code>tag % P</code>.</p>
+
+<h4>Step 3: the top level</h4>
+<pre><code>def serve(state, events, ctx):
+    s = ctx.spec()
+    if "qid" not in state:                       # first wake: state is {}
+        state = empty_state(s)
+    if events["tags"].shape[0] > 0:              # some reads completed
+        state = absorb(state, events, s)
+    if events["qids"].shape[0] > 0:              # some queries arrived
+        state = start(state, events["qids"], events["queries"], s, ctx)
+    return answer(state, ctx)                    # answer what is finished; must return the state dict</code></pre>
+
+<h4>Step 4: new queries</h4>
+<pre><code>def start(state, qids, queries, s, ctx):
+    cent = ctx.hbm("cent")                                    # [K, D]: waits for the HBM transfer
+    lpage = ctx.hbm("lpage")                                  # [K + 1]
+    a, P = qids.shape[0], nprobe(ctx, cent.shape[0])
+    lists = torch.topk(torch.cdist(queries, cent), P, dim=1, largest=False).indices   # [a, P] nearest clusters
+    first, cnt = lpage[lists].reshape(-1), (lpage[lists + 1] - lpage[lists]).reshape(-1)
+    pair = torch.repeat_interleave(torch.arange(a * P), cnt)  # one entry per page to read
+    base = torch.cumsum(cnt, 0) - cnt
+    pages = first[pair] + torch.arange(pair.shape[0]) - base[pair]
+    owner = pair // P                                         # which new query reads it
+    size = record_size(s)
+    used = ((4096 // size) * size + 63) // 64 * 64            # 4032 for SIFT: skip the unused tail
+    ctx.submit(pages, torch.zeros_like(pages), used, qids[owner] * s["pages"] + pages, batch=True)
+    ...  # append one state row per new query, with left = number of pages it reads</code></pre>
+<dl>
+  <dt><code>ctx.hbm("cent")</code></dt><dd>Fetches the whole tensor from HBM: 128 KiB at 250 GB/s plus 0.1 µs latency ≈ 0.6 µs. Pass
+    <code>rows</code> to fetch only some rows.</dd>
+  <dt><code>nprobe(ctx, K)</code></dt><dd>Our helper mapping <code>ctx.effort</code> (0 → <code>nprobe_lo</code>, 1 →
+    <code>nprobe_hi</code>). The host runs the whole task at 9+ effort values to draw the recall–throughput curve.</dd>
+  <dt><code>ctx.submit(pages, offsets, nbytes, tags, batch)</code></dt><dd>One call issues every page read of every new query.
+    <code>offsets</code> are all 0 (start of page), <code>nbytes</code> is one int for all reads, <code>tags</code> as designed,
+    <code>batch=True</code> tells the base die to dispatch them at once rather than wait for its timer. The call returns immediately.</dd>
+</dl>
+
+<h4>Step 5: completed reads</h4>
+<pre><code>def absorb(state, events, s):
+    size, vb, k = record_size(s), s["vector_bytes"], s["k"]
+    per = 4096 // size
+    tags = events["tags"]
+    row = torch.searchsorted(state["qid"], tags // s["pages"])        # state row of each completion
+    rec = events["data"][:, :per * size].reshape(-1, per, size)       # [c, per, size]
+    ids = rec[:, :, :4].contiguous().view(torch.int32).squeeze(2).long()   # [c, per]
+    vec = unpack_rows(rec[:, :, 4:4 + vb], s)                          # [c, per, D]
+    d = ((vec - state["q"][row][:, None, :]) ** 2).sum(2)
+    d = torch.where(ids &gt;= 0, d, torch.full_like(d, float("inf")))    # empty slots never win
+    ...  # merge the candidates of each row into its best k; left -= completions of that row</code></pre>
+<dl>
+  <dt><code>events["data"]</code></dt><dd><code>uint8[c, 4032]</code>: the bytes of the c completed reads. We cut each page into its
+    21 records and decode ids and vectors with <code>view</code>.</dd>
+  <dt>Merging</dt><dd>Several pages of the same query may complete in one wake, so we lay the candidates out as a
+    <code>[Q, W]</code> matrix (one row per query), concatenate it with <code>bd</code>, and take <code>topk</code>. See the full listing.</dd>
+</dl>
+
+<h4>Step 6: answer finished queries</h4>
+<pre><code>def answer(state, ctx):
+    done = state["left"] == 0
+    if not bool(done.any()):                     # one host sync per wake: fine
+        return state
+    ctx.finish(state["qid"][done], state["bi"][done])
+    keep = ~done
+    return {key: v[keep] for key, v in state.items()}</code></pre>
+<p><code>ctx.finish</code> takes the query ids and an <code>int64[a, 10]</code> tensor of result ids. Each answered client immediately sends
+its next query, which arrives in the next wake's <code>events["qids"]</code>.</p>
+
+<h2 id="tut-life">11. One query's life</h2>
+<p>A single query on device C at 100K (tR = 4 µs), with numbers rounded:</p>
+<table>
+<tr><th>Simulated time</th><th>What happens</th></tr>
+<tr><td>100.0 µs</td><td>The previous query of this client was answered; this query arrives.</td></tr>
+<tr><td>100.0 → 101.2</td><td>The host wakes the GPU (1.2 µs per wake). <code>serve</code> sees it in <code>events["qids"]</code>.</td></tr>
+<tr><td>101.2 → 101.8</td><td><code>ctx.hbm("cent")</code>: 128 KiB from HBM.</td></tr>
+<tr><td>101.8 → 101.9</td><td><code>cdist</code>, <code>topk</code>, index arithmetic: billed from shapes, small for one query.</td></tr>
+<tr><td>101.9</td><td><code>ctx.submit</code>: say 16 probed clusters × 19 pages ≈ 300 reads go to the device. <code>serve</code> returns.</td></tr>
+<tr><td>≈ 106</td><td>The first pages are sensed (4 µs) and transferred; the host wakes <code>serve</code> with those completions.</td></tr>
+<tr><td>106 → ≈ 130</td><td>The remaining reads complete bank by bank: about 300 reads over 4 channels × 64 banks, plus link time. Every wake
+  folds the arrived pages into <code>bd</code>, <code>bi</code> and decrements <code>left</code>.</td></tr>
+<tr><td>≈ 130</td><td><code>left</code> hits 0; <code>answer</code> calls <code>ctx.finish</code>. Latency ≈ 30 µs. The client sends its next query.</td></tr>
+</table>
+<p>With many clients, many queries are in flight at once and each wake handles completions of all of them together.</p>
+
+<h2 id="tut-run">12. Run it, read the result</h2>
+<pre><code>python3 -m hbf_eval.bench check docs/tutorial_ivf.py                  # static check: runs nothing
+python3 -m hbf_eval.bench run --schemes docs/tutorial_ivf.py,haven    # score it next to a reference
+python3 -m hbf_eval.bench report</code></pre>
+<p>Each task record in <code>results/results.jsonl</code> has the speedups at recall 0.90 / 0.95 / 0.99 and a <code>diag</code>
+block. Read it to see what limits your scheme:</p>
+<table>
+<tr><th>Field</th><th>Question it answers</th><th>For this tutorial</th></tr>
+<tr><td><code>reads_per_query</code>, <code>senses_per_query</code></td><td>How much flash work per query?</td><td>Hundreds: every probed cluster is read in full.</td></tr>
+<tr><td><code>hit_rate</code></td><td>How often a read found its page in a buffer?</td><td>Rises when queries share clusters and read them close together.</td></tr>
+<tr><td><code>unit_util</code></td><td>Are the banks busy?</td><td>High at high load: flash-bound.</td></tr>
+<tr><td><code>compute_share</code></td><td>Is the GPU the bottleneck?</td><td>Grows with nprobe (distances for every record read).</td></tr>
+<tr><td><code>power_wait_share</code></td><td>Is the power budget the bottleneck?</td><td>Significant on <code>power_bound</code>.</td></tr>
+<tr><td><code>read_rounds_per_query</code></td><td>How many dependent read rounds?</td><td>1: all reads of a query are issued at once.</td></tr>
+</table>
+<p>Ideas to improve it, each using a pattern from Part IV: keep compressed codes in HBM and read only a short list of full vectors
+(that is <code>haven.py</code>); sort reads by bank so duplicate pages hit the buffer (<a href="#pat-coalesce">20</a>); read only
+part of a page (<a href="#ref-ctx">submit</a>); wake less often (<a href="#pat-wait">25</a>).</p>
+
+<h2 id="tut-listing">13. Full listing</h2>
+<p>The complete scheme, <code>docs/tutorial_ivf.py</code>. It passes <code>bench check</code>; its <code>build</code> and
+<code>layout</code> output have been decoded back to the original ids and vectors.</p>
+<pre><code>"""Tutorial scheme: IVF-Flat on HBF. k-means clusters; each cluster's full vectors packed into its own run of HBF pages;
+centroids and the page range of every cluster in HBM. A query reads every page of its nprobe nearest clusters and keeps
+the k nearest records it sees. Written to be read alongside the manual (docs/index.html), not to be fast."""
+
+KNOBS = {
+    "nlist": (256, 8, 4096, "int"),        # number of clusters
+    "kmeans_iters": (8, 1, 30, "int"),     # Lloyd iterations in build
+    "nprobe_lo": (2, 1, 256, "int"),       # clusters probed at effort 0
+    "nprobe_hi": (32, 1, 1024, "int"),     # clusters probed at effort 1 (--wide opens it to 1024)
+}
+
+
+# ---------------------------------------------------------------- build: offline, not timed
+def build(vectors, ctx):
+    n = vectors.shape[0]
+    K = min(ctx.knobs["nlist"], n)
+    cent = vectors[torch.argsort(ctx.uniform(n))[:K]].clone()      # K random vectors as the first centroids
+    for it in range(ctx.knobs["kmeans_iters"]):
+        assign = nearest(vectors, cent)
+        sums = torch.zeros_like(cent).index_add_(0, assign, vectors)
+        count = torch.bincount(assign, minlength=K).to(vectors.dtype)
+        cent = torch.where(count[:, None] &gt; 0, sums / count.clamp(min=1.)[:, None], cent)
+    return {"cent": cent, "assign": nearest(vectors, cent)}
+
+
+# Index of the nearest row of c for every row of x, in chunks of 8192 rows to bound memory.
+def nearest(x, c):
+    cc = (c * c).sum(1)
+    out = []
+    for i in range(0, x.shape[0], 8192):
+        out.append(torch.argmin(cc[None, :] - 2. * x[i:i + 8192] @ c.T, dim=1))
+    return torch.cat(out)
+
+
+# ---------------------------------------------------------------- layout: offline, not timed
+def layout(index, vectors, ctx):
+    s = ctx.spec()
+    n, K = vectors.shape[0], index["cent"].shape[0]
+    size = record_size(s)                     # bytes of one record: 4-byte id + the vector, rounded up to 64
+    per = 4096 // size                        # records per page
+    assign = index["assign"]
+    order = torch.argsort(assign, stable=True)          # vector ids grouped by cluster
+    count = torch.bincount(assign, minlength=K)         # vectors per cluster
+    npages = (count + per - 1) // per                   # pages per cluster (each cluster starts on a fresh page)
+    first_page = torch.cumsum(npages, 0) - npages       # first page of each cluster
+    first_rec = torch.cumsum(count, 0) - count          # first position of each cluster in `order`
+    a = assign[order]
+    pos = torch.arange(n) - first_rec[a]                # position of each vector inside its cluster
+    slot = (first_page[a] + pos // per) * per + pos % per   # global record slot = page * per + slot in page
+    P = int(npages.sum())
+    body = torch.zeros(P * per, size, dtype=torch.uint8)
+    body[:, :4] = 255                                   # id -1 (four 0xFF bytes) marks an empty slot
+    body[slot, :4] = order.to(torch.int32).view(torch.uint8).reshape(n, 4)
+    body[slot, 4:4 + s["vector_bytes"]] = pack_rows(vectors[order], s)
+    pages = torch.zeros(P, 4096, dtype=torch.uint8)
+    pages[:, :per * size] = body.reshape(P, per * size)
+    lpage = torch.cat([first_page, first_page[-1:] + npages[-1:]])   # cluster c = pages lpage[c] .. lpage[c+1]-1
+    return {"pages": pages, "hbm": {"cent": index["cent"], "lpage": lpage}, "sram": {}, "interleave": 1}
+
+
+def record_size(s):
+    return ((4 + s["vector_bytes"] + 63) // 64) * 64
+
+
+# Vectors to their stored bytes: uint8 data one byte per value, float32 four.
+def pack_rows(v, s):
+    if s["dtype"] == "uint8":
+        return v.round().clamp(0, 255).to(torch.uint8)
+    return v.contiguous().view(torch.uint8)
+
+
+def unpack_rows(raw, s):
+    if s["dtype"] == "uint8":
+        return raw.float()
+    return raw.contiguous().view(torch.float32)
+
+
+# ---------------------------------------------------------------- serve: online, timed
+def serve(state, events, ctx):
+    s = ctx.spec()
+    if "qid" not in state:
+        state = empty_state(s)
+    if events["tags"].shape[0] &gt; 0:
+        state = absorb(state, events, s)
+    if events["qids"].shape[0] &gt; 0:
+        state = start(state, events["qids"], events["queries"], s, ctx)
+    return answer(state, ctx)
+
+
+# One row per open query, rows kept in qid order (qids arrive in increasing order and rows are only appended or removed).
+def empty_state(s):
+    k = s["k"]
+    return {"qid": torch.zeros(0, dtype=torch.int64),          # query id
+            "q": torch.zeros(0, s["dim"]),                     # query vector
+            "bd": torch.zeros(0, k),                           # best distances so far
+            "bi": torch.zeros(0, k, dtype=torch.int64),        # their ids
+            "left": torch.zeros(0, dtype=torch.int64)}         # page reads still in flight
+
+
+def nprobe(ctx, K):
+    lo, hi = ctx.knobs["nprobe_lo"], ctx.knobs["nprobe_hi"]
+    return max(1, min(K, int(round(lo + ctx.effort * (hi - lo)))))
+
+
+# New queries: nearest clusters from the HBM centroids, then one read per page of those clusters.
+def start(state, qids, queries, s, ctx):
+    cent = ctx.hbm("cent")                                    # [K, D]: waits for the HBM transfer
+    lpage = ctx.hbm("lpage")                                  # [K + 1]
+    a, P = qids.shape[0], nprobe(ctx, cent.shape[0])
+    lists = torch.topk(torch.cdist(queries, cent), P, dim=1, largest=False).indices   # [a, P]
+    first, cnt = lpage[lists].reshape(-1), (lpage[lists + 1] - lpage[lists]).reshape(-1)
+    pair = torch.repeat_interleave(torch.arange(a * P), cnt)  # one entry per page to read
+    base = torch.cumsum(cnt, 0) - cnt
+    pages = first[pair] + torch.arange(pair.shape[0]) - base[pair]
+    owner = pair // P                                         # row of the new query that reads it
+    size = record_size(s)
+    used = ((4096 // size) * size + 63) // 64 * 64            # bytes of a page that hold records
+    ctx.submit(pages, torch.zeros_like(pages), used, qids[owner] * s["pages"] + pages, batch=True)
+    k = s["k"]
+    new = {"qid": qids, "q": queries, "bd": torch.full((a, k), float("inf")),
+           "bi": torch.zeros(a, k, dtype=torch.int64), "left": torch.bincount(owner, minlength=a)}
+    return {key: torch.cat([state[key], new[key]]) for key in state}
+
+
+# Completed reads: decode the tag, compute exact distances of every record on the page, merge into each query's k best.
+def absorb(state, events, s):
+    size, vb, k = record_size(s), s["vector_bytes"], s["k"]
+    per = 4096 // size
+    tags = events["tags"]
+    row = torch.searchsorted(state["qid"], tags // s["pages"])        # which state row each completion belongs to
+    rec = events["data"][:, :per * size].reshape(-1, per, size)       # [c, per, size]
+    ids = rec[:, :, :4].contiguous().view(torch.int32).squeeze(2).long()   # [c, per]
+    vec = unpack_rows(rec[:, :, 4:4 + vb], s)                          # [c, per, D]
+    d = ((vec - state["q"][row][:, None, :]) ** 2).sum(2)
+    d = torch.where(ids &gt;= 0, d, torch.full_like(d, float("inf")))
+    crow = row[:, None].expand(-1, per).reshape(-1)
+    order = torch.argsort(crow, stable=True)
+    rs = crow[order]
+    col = torch.arange(rs.shape[0]) - torch.searchsorted(rs, rs)      # position of each candidate within its row
+    Q, W = state["qid"].shape[0], int(col.max()) + 1
+    cd = torch.full((Q, W), float("inf"))
+    ci = torch.zeros(Q, W, dtype=torch.int64)
+    cd[rs, col] = d.reshape(-1)[order]
+    ci[rs, col] = ids.reshape(-1)[order].clamp(min=0)
+    alld, alli = torch.cat([state["bd"], cd], 1), torch.cat([state["bi"], ci], 1)
+    top = torch.topk(alld, k, dim=1, largest=False).indices
+    return dict(state, bd=torch.gather(alld, 1, top), bi=torch.gather(alli, 1, top),
+                left=state["left"] - torch.bincount(row, minlength=Q))
+
+
+# Answer every query whose reads are all in, and drop its row.
+def answer(state, ctx):
+    done = state["left"] == 0
+    if not bool(done.any()):
+        return state
+    ctx.finish(state["qid"][done], state["bi"][done])
+    keep = ~done
+    return {key: v[keep] for key, v in state.items()}</code></pre>
+
+<!-- ================================================================== PART III -->
+<div class="partlabel">Part III · Reference</div>
+
+<h2 id="ref-build">14. <code>build(vectors, ctx)</code>: arguments</h2>
+<div class="sig">def build(vectors, ctx) -&gt; {str: tensor}</div>
+<table>
+<tr><th>Name</th><th>Type</th><th>What it is</th></tr>
+<tr><td><code>vectors</code></td><td><code>float32[n, D]</code></td><td>All base vectors, a private copy you may modify. uint8 datasets (SIFT) hold whole numbers 0–255. Angular
+  datasets are unit-normalised, so L2 distance ranks them correctly.</td></tr>
+<tr><td><code>ctx.spec()["n"]</code></td><td>int</td><td>Number of vectors: 100 000 or 1 000 000.</td></tr>
+<tr><td><code>ctx.spec()["dim"]</code></td><td>int</td><td>D: 128 (SIFT), 96 (DEEP).</td></tr>
+<tr><td><code>ctx.spec()["metric"]</code></td><td>str</td><td><code>"l2"</code> or <code>"angular"</code>. Always rank by L2 on the given vectors; it is correct for both.</td></tr>
+<tr><td><code>ctx.spec()["k"]</code></td><td>int</td><td>Neighbours per query: 10.</td></tr>
+<tr><td><code>ctx.spec()["vector_bytes"]</code></td><td>int</td><td>Bytes of one vector in its native type: 128 (SIFT, 1 byte per value), 384 (DEEP, 4 bytes per value). Use it to size records.</td></tr>
+<tr><td><code>ctx.spec()["dtype"]</code></td><td>str</td><td><code>"uint8"</code> or <code>"float32"</code>: the native type, which decides how you pack vectors into bytes.</td></tr>
+<tr><td><code>ctx.knobs["x"]</code></td><td>int or float</td><td>Knob value (int for <code>"int"</code> knobs).</td></tr>
+<tr><td><code>ctx.uniform(*shape)</code></td><td>→ <code>float32</code> in (0, 1)</td><td>Seeded randomness. Random sample of m rows: <code>x[torch.argsort(ctx.uniform(n))[:m]]</code>.
+  Random ints in [0, r): <code>(ctx.uniform(m) * r).long()</code>.</td></tr>
+</table>
+<p><b>Return:</b> a dict <code>{str: tensor}</code>, any content, total at most 16 × the data size. <b>Not timed.</b> The whole job
+(build, layout and all tasks) has 1 h of wall-clock time at 100K, 2 h at 1M; at 1M also 10 GB of resident memory.
+<b>Caching:</b> keyed by the code of every function <code>build</code> reaches and the knobs they read; comments and docstrings do not count.</p>
+
+<h2 id="ref-layout">15. <code>layout(index, vectors, ctx)</code>: arguments and spec</h2>
+<div class="sig">def layout(index, vectors, ctx) -&gt; plan</div>
+<p><code>index</code> is what <code>build</code> returned; <code>vectors</code> the base vectors again. <code>ctx.spec()</code> has
+<code>build</code>'s fields plus the device datasheet below. <code>layout</code> runs per task and seed, so it can choose the layout
+for the device it gets (for example, a smaller HBM table when <code>hbm_bytes</code> is small).</p>
+<table>
+<tr><th>Field</th><th>Meaning</th><th>Values</th><th>Use it to…</th></tr>
+<tr><td><code>hbm_bytes</code></td><td>Your HBM budget, all positions together</td><td>5%–25% of the data size</td><td>decide what tables fit in HBM; the plan is rejected if <code>plan["hbm"]</code> is larger</td></tr>
+<tr><td><code>sram_bytes_per_channel</code></td><td>Your SRAM budget per channel</td><td>0 to 2 MiB; <b>can be 0</b></td><td>decide whether to use SRAM at all</td></tr>
+<tr><td><code>hbf_pages_per_position</code></td><td>HBF capacity of one position, in pages</td><td>3 × data size / 4096</td><td>bound replication: total ≤ (8 − m) × this</td></tr>
+<tr><td><code>m</code>, <code>positions</code></td><td>HBM positions out of 8 positions</td><td>4, 8</td><td>number of HBF positions = 8 − m</td></tr>
+<tr><td><code>channels_per_position</code></td><td>HBF channels per position</td><td>1 (100K), 2 (1M)</td><td>total channels C = (8 − m) × this</td></tr>
+<tr><td><code>units_per_channel</code></td><td>Banks per channel that sense in parallel</td><td>32, 64 or 128</td><td>how many reads can be in progress at once</td></tr>
+<tr><td><code>dies_per_channel</code>, <code>banks_per_die</code></td><td>The structure behind units</td><td>4 × 32, 1 × 32, 4 × 16</td><td>predict where a page lands (<a href="#ref-plan">section 16</a>)</td></tr>
+<tr><td><code>tR_us</code></td><td>Time to sense a page (±10% jitter)</td><td>1.5, 4 or 20 µs</td><td>weigh a dependent read against more compute or more HBM</td></tr>
+<tr><td><code>channel_GBps</code></td><td>Link bandwidth per channel</td><td>24, 96 or 192 GB/s</td><td>decide whether partial reads matter (they save link time only)</td></tr>
+<tr><td><code>coredie_channels</code></td><td>Paths from dies to the base die per channel</td><td>1 or 2</td><td>rarely needed</td></tr>
+<tr><td><code>power_W_per_position</code>, <code>sense_uJ</code></td><td>Power budget; energy per sense</td><td>1.875 W (100K), 0.039–0.27 µJ</td><td>senses per µs the budget sustains = W / µJ × positions</td></tr>
+<tr><td><code>program_uJ</code>, <code>program_us</code>, <code>program_holds</code></td><td>Cost of rewriting a page (refresh)</td><td>3.28 µJ; 75 or 200 µs; <code>"die"</code>/<code>"plane"</code></td><td>only for your own refresh policy</td></tr>
+<tr><td><code>pages_per_block</code>, <code>refresh_slack_pages</code></td><td>Flash block size; refresh debt allowed before reads retry</td><td>256; 4</td><td>only for your own refresh policy</td></tr>
+<tr><td><code>hbm_GBps_per_position</code>, <code>hbm_latency_us</code></td><td>HBM speed</td><td>62.5 (100K); 0.1 µs</td><td>HBM bandwidth in total = m × this</td></tr>
+<tr><td><code>sram_latency_us</code></td><td>SRAM latency</td><td>0.05 µs</td><td></td></tr>
+<tr><td><code>mocs</code></td><td>Reads per channel the base die accepts at once</td><td>256 to 16 384</td><td>know when issuing more reads stops helping</td></tr>
+</table>
+<p>Not visible: the buffer replacement policy (LRU or FIFO), the base-die timer (0–2 µs), the exact jitter and the refresh
+thresholds. These are drawn per seed, as a host cannot read them on a real device: a good scheme works for all of them.</p>
+
+<h2 id="ref-plan">16. The plan</h2>
+<div class="sig">{"pages": uint8[P, 4096], "hbm": {str: tensor}, "sram": {str: tensor}, "interleave": int, "refresh": "default" | "scheme"}</div>
+<dl>
+  <dt><code>"pages"</code></dt><dd><code>uint8[P, 4096]</code>, P ≥ 1. Row p is page p on the device, byte for byte. Content is up to you: records,
+    adjacency lists, codes, anything. P ≤ (8 − m) × <code>hbf_pages_per_position</code>.</dd>
+  <dt><code>"hbm"</code></dt><dd>Named tensors of any dtype and shape. The first dimension is the row that <code>ctx.hbm(name, rows)</code> indexes.
+    Total bytes ≤ <code>hbm_bytes</code>. To reserve space you fill later in <code>serve</code>, put a zero tensor of the size you need.</dd>
+  <dt><code>"sram"</code></dt><dd>Named tensors placed in the base-die SRAM. Row r is on channel r mod C. Per channel, the bytes of the rows it holds
+    must fit <code>sram_bytes_per_channel</code>. Reading it costs the channel link, not HBM. Use <code>{}</code> if
+    <code>sram_bytes_per_channel</code> is 0.</dd>
+  <dt><code>"interleave"</code></dt><dd>g, 1 to 2<sup>20</sup>: runs of g consecutive pages go to one channel, then the next. Placement:
+<pre><code>channel = (p // g) % C
+local   = g * (p // (g * C)) + p % g      # index of the page within its channel
+die     = (local // banks_per_die) % dies_per_channel
+bank    = local % banks_per_die</code></pre>
+    Example, C = 4 channels, 64 banks:
+    <table>
+    <tr><th>page</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>…</th></tr>
+    <tr><td>g = 1: (channel, bank)</td><td>(0, 0)</td><td>(1, 0)</td><td>(2, 0)</td><td>(3, 0)</td><td>(0, 1)</td><td>(1, 1)</td><td>spread over channels</td></tr>
+    <tr><td>g = 4: (channel, bank)</td><td>(0, 0)</td><td>(0, 1)</td><td>(0, 2)</td><td>(0, 3)</td><td>(1, 0)</td><td>(1, 1)</td><td>runs stay on a channel</td></tr>
+    </table>
+    Use g = 1 to read consecutive pages in parallel over all channels; use a larger g to keep related pages on one channel. Since
+    placement is a fixed formula, you can put any page on any bank by choosing its page number.</dd>
+  <dt><code>"refresh"</code> (optional)</dt><dd><code>"default"</code>: the host pays flash refresh automatically when a die is idle, or at once when a
+    plane owes more than <code>refresh_slack_pages</code>. <code>"scheme"</code>: refresh is paid only when you call <code>ctx.refresh</code>
+    (<a href="#pat-refresh">section 24</a>); the device still forces it above 2 × <code>refresh_slack_pages</code>.</dd>
+</dl>
+<p>No other keys are allowed. Writing the pages is free (no program time or wear for loading the index).</p>
+
+<h2 id="ref-serve">17. <code>serve(state, events, ctx)</code>: state and events</h2>
+<div class="sig">def serve(state, events, ctx) -&gt; state</div>
+<h4><code>state</code></h4>
 <ul>
-  <li>Your dict, returned by one call and passed to the next (<code>{}</code> at the first call).</li>
-  <li>May hold tensors, numbers, strings of at most 64 characters, lists, tuples and dicts with string keys, nested at most 8 deep.</li>
-  <li>Size cap <code>ctx.spec()["state_bytes"]</code> = min(clients × 64 KiB, the GPU's on-chip budget: 16 MiB at 100K, 32 MiB at 1M).
-    It models working state on chip, so it cannot hold the data set.</li>
+  <li>Whatever you returned last time; <code>{}</code> at the first call of each run (each task × effort level is a new run).</li>
+  <li>Must be a <code>dict</code>. Values may be tensors, numbers, strings up to 64 characters, lists, tuples and dicts with string keys,
+    nested at most 8 levels.</li>
+  <li>Size cap <code>ctx.spec()["state_bytes"]</code> = min(clients × 64 KiB, 16 MiB at 100K / 32 MiB at 1M). It models what fits on chip,
+    so it cannot hold the dataset; keep only per-query progress.</li>
+  <li>Returning anything but a dict (for example forgetting <code>return</code>) fails the run.</li>
+</ul>
+<h4><code>events</code></h4>
+<table>
+<tr><th>Key</th><th>Type</th><th>Meaning</th></tr>
+<tr><td><code>"qids"</code></td><td><code>int64[a]</code></td><td>Ids of queries that arrived since the last wake, in increasing order. Ids are 0, 1, 2, … over the run.</td></tr>
+<tr><td><code>"queries"</code></td><td><code>float32[a, D]</code></td><td>Their vectors. This is the only time you see them: store them in <code>state</code> if you need them later.</td></tr>
+<tr><td><code>"tags"</code></td><td><code>int64[c]</code></td><td>Tags of reads that completed since the last wake, in completion order.</td></tr>
+<tr><td><code>"nbytes"</code></td><td><code>int64[c]</code></td><td>Size of each completed read.</td></tr>
+<tr><td><code>"data"</code></td><td><code>uint8[c, W]</code></td><td>Row i is the data of read i. W = the largest size among them; shorter reads are padded with zeros.</td></tr>
+</table>
+<p>Example of one wake's <code>events</code> in the tutorial (illustrative numbers, P = 5132 pages):</p>
+<pre><code>events["qids"]     tensor([57, 58])                 # two new queries
+events["queries"]  shape [2, 128]
+events["tags"]     tensor([259146, 259150, 264210])  # = qid * 5132 + page: queries 50, 50 and 51
+events["nbytes"]   tensor([4032, 4032, 4032])
+events["data"]     shape [3, 4032], dtype uint8</code></pre>
+<p>Either part may be empty: a wake can bring only completions, only queries, or both.</p>
+
+<h2 id="ref-ctx">18. <code>ctx</code> in serve, method by method</h2>
+
+<div class="sig">ctx.submit(pages, offsets, nbytes, tags, batch=False) → None</div>
+<p>Issue HBF reads. They start on the device now; their data arrives in later <code>events</code>.</p>
+<table>
+<tr><th>Argument</th><th>Type</th><th>Allowed values</th><th>Meaning</th></tr>
+<tr><td><code>pages</code></td><td><code>int64[r]</code></td><td>0 ≤ page &lt; P</td><td>Which page each read targets.</td></tr>
+<tr><td><code>offsets</code></td><td><code>int64[r]</code></td><td>multiple of 64, 0–4032</td><td>Byte offset inside the page where the read starts.</td></tr>
+<tr><td><code>nbytes</code></td><td><code>int64[r]</code> or int</td><td>64 to 4096, multiple of 64; offset + nbytes ≤ 4096</td><td>How many bytes to bring back. One int applies to all reads.</td></tr>
+<tr><td><code>tags</code></td><td><code>int64[r]</code></td><td>any integers</td><td>Your label for each read, returned with its data. Duplicates are allowed.</td></tr>
+<tr><td><code>batch</code></td><td>bool</td><td><code>True</code> / <code>False</code></td><td>Batch Read: dispatch these reads (and any held ones) at once instead of waiting for the base-die timer.</td></tr>
+</table>
+<pre><code># read the 64-byte neighbour list at offset 1024 of page 17, for query 3, and a whole page 90, for query 4
+ctx.submit(torch.tensor([17, 90]), torch.tensor([1024, 0]), torch.tensor([64, 4096]),
+           torch.tensor([3 * 1000 + 17, 4 * 1000 + 90]), batch=True)</code></pre>
+<ul>
+  <li><b>Cost to you:</b> no clock time; the device works in the background.</li>
+  <li><b>What the device does:</b> each read senses its whole page (unless the page is in one of its bank's 2 buffers), then
+    sends the requested bytes over the link. Reads reach a bank in the order you submit them.</li>
+  <li><b>Partial reads</b> save link time, not sense time. They pay off when the link is the bottleneck (fast tR, slow link).</li>
+  <li><b>Limits:</b> 2<sup>20</sup> reads per call, 2<sup>21</sup> in flight. Beyond <code>mocs</code> per channel, reads wait on the host side.</li>
+  <li><b>Batch or not:</b> use <code>batch=True</code> when you issue a group at once; without it, a lone read can wait up to the timer (0–2 µs).</li>
+  <li><b>Pitfall:</b> all four arguments must be <code>int64</code> tensors of one length (<code>torch.tensor([...])</code> gives int64 for
+    Python ints). An offset that is not a multiple of 64, or a read crossing the page end, fails the run.</li>
 </ul>
 
-<h3 id="ctx">ctx methods in serve</h3>
-<p>All tensor arguments are <code>int64</code> unless stated. Methods marked "lane: deferred" can be called inside a
-<code>ctx.lanes</code> loop and take effect at that lane's time when the loop ends.</p>
+<div class="sig">ctx.hbm(name, rows=None) → tensor<br>ctx.sram(name, rows=None) → tensor</div>
+<p>Read rows of a tensor that <code>layout</code> placed in HBM (or SRAM). Waits for the data.</p>
+<table>
+<tr><th>Argument</th><th>Type</th><th>Meaning</th></tr>
+<tr><td><code>name</code></td><td>str</td><td>A key of <code>plan["hbm"]</code> (or <code>plan["sram"]</code>).</td></tr>
+<tr><td><code>rows</code></td><td><code>int64</code> tensor of any shape, or <code>None</code></td><td>Row ids along the first dimension. The result has shape
+  <code>rows.shape + row shape</code>. <code>None</code> returns the whole tensor.</td></tr>
+</table>
+<pre><code>cent = ctx.hbm("cent")                      # whole tensor, [K, D]
+nbr  = ctx.hbm("adj", node_ids)             # node_ids int64[a, 4] → result [a, 4, R]
+hot  = ctx.sram("hot", torch.tensor([3, 7]))</code></pre>
+<ul>
+  <li><b>Cost (HBM):</b> rows × row bytes (each row rounded up to 32 B) / HBM bandwidth + 0.1 µs. Whole 128 KiB at 100K: ≈ 0.6 µs.</li>
+  <li><b>Cost (SRAM):</b> the busiest channel's bytes (rows rounded up to 64 B) / channel link + 0.05 µs. SRAM shares the link with flash
+    transfers (it goes first among queued transfers). Spread hot rows over channels (row r → channel r mod C).</li>
+  <li>Fetch only the rows you need: reading a large table whole every wake adds up.</li>
+</ul>
 
-<div class="method">ctx.submit(pages, offsets, nbytes, tags, batch=False) → None</div>
+<div class="sig">ctx.hbm_write(name, rows, values) → None<br>ctx.sram_write(name, rows, values) → None</div>
+<p>Overwrite rows of a placed tensor while serving: caches, learned tables, statistics.</p>
+<table>
+<tr><th>Argument</th><th>Type</th><th>Meaning</th></tr>
+<tr><td><code>rows</code></td><td>distinct <code>int64[r]</code>, or <code>None</code></td><td>Rows to overwrite; <code>None</code> = the whole tensor.</td></tr>
+<tr><td><code>values</code></td><td>same dtype as the tensor, shape <code>[r, *row shape]</code></td><td>The new rows.</td></tr>
+</table>
+<ul>
+  <li><b>Cost:</b> the same as reading those rows.</li>
+  <li>The tensor's size never changes: reserve it in <code>layout</code>. Writes last for the rest of the run; every effort level starts again
+    from <code>layout</code>'s content. See <a href="#pat-cache">section 23</a>.</li>
+</ul>
+
+<div class="sig">ctx.finish(qids, ids) → None</div>
+<table>
+<tr><th>Argument</th><th>Type</th><th>Meaning</th></tr>
+<tr><td><code>qids</code></td><td><code>int64[a]</code></td><td>Open queries to answer, each at most once.</td></tr>
+<tr><td><code>ids</code></td><td><code>int64[a, k]</code></td><td>Their k result ids, each in [0, n). Order inside a row does not matter for recall.</td></tr>
+</table>
+<ul>
+  <li>The query's latency ends now. Its client sends the next query at once; it appears in the next <code>events</code>.</li>
+  <li>Answering a query twice, or one that is not open, fails the run. If you have fewer than k candidates, pad with any valid ids.</li>
+</ul>
+
+<div class="sig">ctx.wait(count=1, timeout_us=inf) → None</div>
+<p>Choose when the next wake happens: when at least <code>count</code> events (completions plus arrivals) are waiting, or
+<code>timeout_us</code> has passed, or nothing is in flight. Applies to the next wake only; the default is "wake on the first
+event". Fewer wakes save 1.2 µs each and let you batch more work, at the price of some latency
+(<a href="#pat-wait">section 25</a>).</p>
+
+<div class="sig">for i in ctx.lanes(n):</div>
+<p>A loop whose body runs once per lane, all lanes in parallel on the GPU. Inside a lane, turning a tensor into a Python value
+(<code>if x[i] &gt; y:</code>, <code>int(...)</code>, <code>.item()</code>) costs 0.02 µs instead of a 0.5 µs host sync. Use it for
+per-query control flow (<a href="#pat-lanes">section 22</a>).</p>
+<ul>
+  <li><code>n</code>: an int, 0 to 65 536, usually the number of open queries.</li>
+  <li><b>Cost:</b> 0.6 µs + max(sum of all lanes' compute, max over lanes of (24 × its compute + its branches + its HBM/SRAM waits)).
+    A lane runs at one SM's speed (1/24 of the GPU); all lanes together never beat the whole GPU.</li>
+  <li><code>ctx.submit</code> and <code>ctx.finish</code> inside a lane take effect at that lane's own time when the loop ends.</li>
+  <li>Rules: no <code>break</code> or <code>return</code> inside the loop; no nesting; no <code>ctx.debt</code> / <code>ctx.refresh</code> inside.</li>
+</ul>
+
+<div class="sig">ctx.mapping(pages) → int64[r, 3]</div>
+<p>Channel, die and bank of each page, as the host reads them from the device's configuration. Free. Use it to group or order
+reads by bank (<a href="#pat-coalesce">section 20</a>).</p>
+
+<div class="sig">ctx.pending() → int64[...] · ctx.now() → float · ctx.spec() · ctx.knobs · ctx.effort · ctx.uniform(*shape)</div>
 <dl>
-  <dt>Arguments</dt>
-  <dd><code>pages</code>, <code>offsets</code>, <code>tags</code>: <code>int64[r]</code>; <code>nbytes</code>: <code>int64[r]</code>
-    or one int for all. <code>tags</code> are any integers you choose (for example <code>qid * n + node</code>); they come
-    back in <code>events["tags"]</code>.</dd>
-  <dt>Rules</dt>
-  <dd>Each read: 64 B to 4096 B, offset and size multiples of 64, inside one page; page in [0, P). At most 2<sup>20</sup> reads
-    per call and 2<sup>21</sup> in flight.</dd>
-  <dt>Effect</dt>
-  <dd>Issues the reads now and returns at once. Reads reach each unit in the order given. <code>batch=True</code> is the Batch
-    Read hint: these reads, and any held at the base die, dispatch at once instead of waiting for the base-die timer.</dd>
-  <dt>Cost</dt><dd>One kernel entry on the host side (0 µs in the default table). Device time is what the reads take on the device.</dd>
-  <dt>Lane</dt><dd>deferred.</dd>
+  <dt><code>ctx.pending()</code></dt><dd>Tags of your reads that are issued and not yet delivered, in issue order. Free. Useful to avoid issuing
+    the same page twice, or to see how much work is in flight.</dd>
+  <dt><code>ctx.now()</code></dt><dd>The simulated clock in µs.</dd>
+  <dt><code>ctx.spec()</code></dt><dd>Layout's fields plus: <code>channels</code> (C), <code>pages</code> (P), <code>interleave</code>,
+    <code>refresh</code>, <code>clients</code> (N, the number of concurrent queries), <code>state_bytes</code>, and <code>hbm</code> /
+    <code>sram</code> (<code>{name: shape}</code> of what layout placed).</dd>
+  <dt><code>ctx.effort</code></dt><dd>A float in [0, 1] fixed for the whole run. The host sweeps it (9 values, then refines) to draw your
+    recall–throughput curve. Map it to whatever trades speed for recall: probes, beam width, re-rank count. Higher must mean more recall.</dd>
+  <dt><code>ctx.uniform(*shape)</code></dt><dd>As in <code>build</code>; billed like writing that many floats.</dd>
 </dl>
 
-<div class="method">ctx.hbm(name, rows=None) → tensor</div>
-<div class="method">ctx.sram(name, rows=None) → tensor</div>
-<dl>
-  <dt>Arguments</dt><dd><code>name</code>: a tensor <code>layout</code> placed in that tier. <code>rows</code>: <code>int64</code>
-    row ids of any shape, or <code>None</code> for the whole tensor.</dd>
-  <dt>Returns</dt><dd><code>tensor[rows]</code> (a copy).</dd>
-  <dt>Cost</dt><dd>Waits for the data. HBM: bytes / HBM bandwidth + 0.1 µs, with each row rounded up to 32 B. SRAM: the busiest
-    channel's bytes / channel link bandwidth + 0.05 µs, rows rounded up to 64 B; SRAM traffic shares the channel link with HBF
-    transfers (with priority over queued ones).</dd>
-  <dt>Lane</dt><dd>allowed; the wait counts toward that lane's latency, and the phase lasts at least until all lanes' traffic is through.</dd>
-</dl>
+<div class="sig">ctx.debt() → float64[dies] · ctx.refresh(dies, counts=1) → None</div>
+<p>Every sense slowly disturbs its flash block; the device must eventually spend time rewriting pages ("refresh").
+<code>ctx.debt()</code> gives the pages of refresh each die owes (die id = channel × dies_per_channel + die).
+<code>ctx.refresh(dies, counts)</code> starts that many refresh operations on those dies (int64 tensors; counts may be one int). One
+operation waits for the die's reads in progress, then holds the die for tR + program time. Only meaningful with
+<code>plan["refresh"] = "scheme"</code>; see <a href="#pat-refresh">section 24</a>. Not allowed inside a lane.</p>
 
-<div class="method">ctx.hbm_write(name, rows, values) → None</div>
-<div class="method">ctx.sram_write(name, rows, values) → None</div>
-<dl>
-  <dt>Arguments</dt><dd><code>rows</code>: distinct <code>int64[r]</code>, or <code>None</code> for the whole tensor.
-    <code>values</code>: the tensor's dtype, shape <code>[r, *row shape]</code> (or the full shape).</dd>
-  <dt>Effect</dt><dd>Overwrites those rows. The tensor keeps the size and shape <code>layout</code> gave it. Writes last for the rest
-    of the run; the next effort level starts from <code>layout</code>'s contents again.</dd>
-  <dt>Cost</dt><dd>The same as reading the same rows.</dd>
-</dl>
+<!-- ================================================================== PART IV -->
+<div class="partlabel">Part IV · Patterns</div>
+<p>How common ideas map onto the interface. These are fragments; the bundled schemes in <code>hbf_eval/schemes/</code> are full examples.</p>
 
-<div class="method">for i in ctx.lanes(n):</div>
-<dl>
-  <dt>Arguments</dt><dd><code>n</code>: int, 0 to 65 536 (for example one lane per open query).</dd>
-  <dt>Effect</dt><dd>Runs the loop body once per lane. Each lane models one thread block on one SM: inside it, reading a tensor value
-    (<code>.item()</code>, <code>bool()</code>, <code>int()</code>, <code>.tolist()</code>) is a branch on the GPU (0.02 µs) instead
-    of a host sync (0.5 µs plus host-link bytes).</dd>
-  <dt>Cost</dt><dd>The phase lasts 0.6 µs + max(sum of all lanes' compute, max over lanes of (24 × its compute + its branches + its
-    HBM/SRAM waits)). The lanes together never beat the whole GPU; one lane never beats one SM (1/24 of the GPU).</dd>
-  <dt>Rules</dt><dd>The loop must run to its end (no <code>break</code> or <code>return</code> inside it). No nesting.
-    <code>ctx.debt</code> and <code>ctx.refresh</code> are not allowed inside. Use it when control flow differs per query;
-    heavy arithmetic is still cheaper as batched code outside.</dd>
-</dl>
+<h2 id="pat-graph">19. A graph walk (dependent reads)</h2>
+<p>Each node's record (vector + neighbour ids) is on HBF. A query keeps a candidate list; each step reads the best unvisited
+node, and the next step can only start when that read returns. In <code>serve</code> this is a loop across wakes, not inside one:</p>
+<pre><code># state per query: cand_ids [Q, L], cand_d [Q, L], visited bitmap or list, inflight [Q]
+# 1. completions: decode each node's neighbours, compute their distances (from HBM codes or the vectors you read),
+#    merge into cand_*, mark the node visited, inflight -= 1
+# 2. for every query with inflight == 0: pick its best unvisited candidates (beam width W from ctx.effort)
+#    and submit their records in ONE ctx.submit for all queries (tag = qid * n + node)
+# 3. queries with no unvisited candidate left: ctx.finish</code></pre>
+<p>Latency is about (number of hops) × (one read). The usual ways to shorten it: fewer hops (better entry points from an HBM table,
+see <code>compass.py</code>), more useful nodes per read (put neighbours on the same page: <code>pageann.py</code>,
+<code>starling.py</code>), or not waiting for the slowest read of a step (<code>pipeann.py</code>).</p>
 
-<div class="method">ctx.finish(qids, ids) → None</div>
-<dl>
-  <dt>Arguments</dt><dd><code>qids</code>: <code>int64[a]</code>, each an open query, each once. <code>ids</code>:
-    <code>int64[a, k]</code>, base-vector ids in [0, n).</dd>
-  <dt>Effect</dt><dd>Answers those queries now. Each answered client sends its next query at once; it appears in the next
-    <code>events</code>.</dd>
-  <dt>Lane</dt><dd>deferred.</dd>
-</dl>
+<h2 id="pat-coalesce">20. Coalescing reads by unit</h2>
+<p>When many queries read the same pages, issue them so that reads of one page reach its bank back to back: the second one hits
+the page buffer and costs no sense.</p>
+<pre><code>m = ctx.mapping(pages)                                         # [r, 3]: channel, die, bank
+unit = (m[:, 0] * s["dies_per_channel"] + m[:, 1]) * s["banks_per_die"] + m[:, 2]
+order = torch.argsort(unit * s["pages"] + pages, stable=True)  # by unit, then by page
+ctx.submit(pages[order], offsets[order], nbytes, tags[order], batch=True)</code></pre>
+<p>Check the effect in <code>diag.hit_rate</code> and <code>diag.senses_per_query</code>.</p>
 
-<div class="method">ctx.wait(count=1, timeout_us=inf) → None</div>
-<dl><dd>Sets the next wake: when <code>count</code> events (completions plus new queries) are waiting, or after
-  <code>timeout_us</code>, or when nothing is in flight, whichever comes first. Applies to the next wake only. Use it to batch
-  more completions per wake (fewer wake costs) at the price of latency.</dd></dl>
+<h2 id="pat-pipeline">21. Pipelining and speculation</h2>
+<p>Because <code>submit</code> does not wait, you can issue the next reads before the current ones return: read the next probe's pages
+while still scanning this one, or read the second-best candidate's record in case the best one disappoints. Speculative reads cost
+senses (power, bank time) even when unused, so check <code>senses_per_query</code> against the latency you gain.</p>
 
-<div class="method">ctx.mapping(pages) → int64[r, 3]</div>
-<dl><dd>Channel, die and bank of each page (what a host reads from the configuration registers). Free.</dd></dl>
+<h2 id="pat-lanes">22. Per-query branches with lanes</h2>
+<p>Outside a lane, any decision on a tensor value is a host sync; a loop over 500 queries with an <code>if</code> costs 500 × 0.5 µs.
+Inside <code>ctx.lanes</code> the same branch costs 0.02 µs and the queries run in parallel:</p>
+<pre><code>Q = state["qid"].shape[0]
+for i in ctx.lanes(Q):
+    if float(state["gap"][i]) &lt; 0.01:                        # this query has converged: stop early
+        ctx.finish(state["qid"][i:i + 1], state["bi"][i:i + 1])
+    else:
+        nxt = state["cand"][i, :int(state["width"][i])]       # its own beam width
+        ctx.submit(page_of(nxt), off_of(nxt), 192, state["qid"][i] * s["n"] + nxt)</code></pre>
+<p>Heavy arithmetic (distances over many vectors) is still cheaper as one batched op outside the loop: inside a lane it runs at 1/24
+of the GPU.</p>
 
-<div class="method">ctx.pending() → int64[...]</div>
-<dl><dd>Tags of your reads issued and not yet seen complete, in issue order. Free.</dd></dl>
+<h2 id="pat-cache">23. A cache filled while serving</h2>
+<p>Reserve space in <code>layout</code>, fill it in <code>serve</code>:</p>
+<pre><code># layout: 512 cached pages and a table of which page each slot holds (-1 = empty); check it fits s["hbm_bytes"]
+hbm["cpage"] = torch.full((512,), -1, dtype=torch.int64)
+hbm["cdata"] = torch.zeros(512, 4096, dtype=torch.uint8)
 
-<div class="method">ctx.now() → float</div>
-<dl><dd>Simulated time in µs (inside a lane: that lane's time).</dd></dl>
+# serve: look up before reading from flash
+cp = ctx.hbm("cpage")                                    # 4 KiB
+hit = (pages[:, None] == cp[None, :])                    # [r, 512]
+slot = hit.float().argmax(1)
+is_hit = hit.any(1)
+data_hit = ctx.hbm("cdata", slot[is_hit])                # served from HBM, no flash read
+# ... submit the misses; when a hot page comes back, store it:
+ctx.hbm_write("cdata", victim_slots, new_pages)          # victim_slots distinct int64[r], new_pages uint8[r, 4096]
+ctx.hbm_write("cpage", victim_slots, new_page_ids)</code></pre>
 
-<div class="method">ctx.debt() → float64[dies]</div>
-<dl><dd>Pages of refresh work each die owes (the most any of its planes owes). Die id = channel × dies_per_channel + die.
-  Not allowed inside a lane.</dd></dl>
+<h2 id="pat-refresh">24. Your own refresh policy</h2>
+<pre><code># layout:  return {..., "refresh": "scheme"}
+# serve: pay refresh when the device is quiet
+d = ctx.debt()                                           # float64[dies]
+owe = torch.nonzero(d &gt;= 1).flatten()
+if owe.numel() &gt; 0 and ctx.pending().numel() &lt; 16:     # few reads in flight
+    ctx.refresh(owe, 1)</code></pre>
+<p>If you never pay, debt grows until reads start retrying, and above 2 × <code>refresh_slack_pages</code> the device forces payment at
+a moment you did not choose.</p>
 
-<div class="method">ctx.refresh(dies, counts=1) → None</div>
-<dl><dd>Starts <code>counts[i]</code> refresh operations on die <code>dies[i]</code>. One operation waits for the die's reads in progress,
-  draws sense + program energy, then holds the die (or, where programs hold one plane, the plane that owes most) for
-  tR + program time, and retires up to one page of debt per plane. Useful only with <code>plan["refresh"] = "scheme"</code>.
-  Not allowed inside a lane.</dd></dl>
+<h2 id="pat-wait">25. Fewer, fuller wakes</h2>
+<p>By default <code>serve</code> wakes on every completion. With hundreds of reads in flight that means hundreds of wakes, each
+costing 1.2 µs plus your fixed per-wake work. Ask to wake when more is ready:</p>
+<pre><code>ctx.wait(count=32, timeout_us=2 * s["tR_us"])     # wake when 32 events wait, or after two sense times</code></pre>
+<p>The timeout bounds the delay at low load, where 32 events may never come.</p>
 
-<div class="method">ctx.spec(), ctx.knobs, ctx.effort, ctx.uniform(*shape)</div>
-<dl>
-  <dd><code>ctx.spec()</code>: all of layout's fields, plus <code>channels</code> (C), <code>pages</code> (P),
-    <code>interleave</code>, <code>refresh</code>, <code>clients</code> (N), <code>state_bytes</code> (the state cap),
-    <code>hbm</code> and <code>sram</code> (<code>{name: shape}</code> of what layout placed).</dd>
-  <dd><code>ctx.effort</code>: a float in [0, 1] set by the host for this run. Map it to your search effort (probes, beam width,
-    re-rank count); higher should mean more recall.</dd>
-  <dd><code>ctx.uniform(*shape)</code>: seeded uniform samples, billed like writing that many floats.</dd>
-</dl>
+<!-- ================================================================== PART V -->
+<div class="partlabel">Part V · Rules and limits</div>
 
-<!-- ============================================================ -->
-<h2 id="billing">7. How time is billed</h2>
-<p>The default billing table models an RTX 4060-class GPU running each wake as one fused kernel.</p>
+<h2 id="capabilities">26. Can I express this?</h2>
+<p><span class="tag yes">Yes</span> works directly; <span class="tag part">Partly</span> works with a workaround or restriction;
+<span class="tag no">No</span> cannot be expressed in this version.</p>
+<table>
+<tr><th>Design</th><th></th><th>How, or why not</th></tr>
+<tr><td>Any index: graph, IVF, PQ / SQ / OPQ, LSH, trees, multi-level, hybrids</td><td><span class="tag yes">Yes</span></td><td>Arbitrary torch code in <code>build</code>; index ≤ 16 × data.</td></tr>
+<tr><td>Learned components (routers, learned quantizers, small networks)</td><td><span class="tag part">Partly</span></td><td>Train with tensor code and <code>torch.autograd.grad</code>; no <code>torch.nn</code> / <code>torch.optim</code>, so write layers and updates yourself.</td></tr>
+<tr><td>Training on the query distribution</td><td><span class="tag no">No</span></td><td><code>build</code> and <code>layout</code> see only base vectors; learn online in <code>serve</code> instead.</td></tr>
+<tr><td>Custom compression or bit packing</td><td><span class="tag yes">Yes</span></td><td>Pages are raw bytes; decoding in <code>serve</code> is billed.</td></tr>
+<tr><td>Replicating hot data</td><td><span class="tag yes">Yes</span></td><td>About 12 × the data size of HBF capacity.</td></tr>
+<tr><td>Choosing a page's channel, die and bank</td><td><span class="tag yes">Yes</span></td><td>Fixed formula of page number and interleave (<a href="#ref-plan">16</a>).</td></tr>
+<tr><td>Tables in HBM</td><td><span class="tag yes">Yes</span></td><td>Up to <code>hbm_bytes</code>.</td></tr>
+<tr><td>Base-die SRAM</td><td><span class="tag part">Partly</span></td><td>0–2 MiB per channel, can be 0: must work without it.</td></tr>
+<tr><td>Async reads, pipelining, speculation, prefetch</td><td><span class="tag yes">Yes</span></td><td><code>ctx.submit</code> + later <code>events</code>.</td></tr>
+<tr><td>Partial-page reads</td><td><span class="tag yes">Yes</span></td><td>64 B granularity; still senses the whole page.</td></tr>
+<tr><td>Cross-query batching, deduplication, coalescing</td><td><span class="tag yes">Yes</span></td><td>One <code>serve</code> sees all open queries.</td></tr>
+<tr><td>Scheduling by bank</td><td><span class="tag yes">Yes</span></td><td><code>ctx.mapping</code>; submission order is arrival order at a bank.</td></tr>
+<tr><td>Exploiting page buffers</td><td><span class="tag part">Partly</span></td><td>2 per bank; replacement policy hidden and drawn per seed.</td></tr>
+<tr><td>Per-query control flow</td><td><span class="tag yes">Yes</span></td><td><code>ctx.lanes</code>.</td></tr>
+<tr><td>Caches or tables updated online</td><td><span class="tag yes">Yes</span></td><td><code>ctx.hbm_write</code> / <code>ctx.sram_write</code>, sizes fixed by layout.</td></tr>
+<tr><td>Refresh scheduling</td><td><span class="tag yes">Yes</span></td><td><code>"refresh": "scheme"</code>, <code>ctx.debt</code>, <code>ctx.refresh</code>.</td></tr>
+<tr><td>Power-aware pacing</td><td><span class="tag part">Partly</span></td><td>Budget and energy per sense are in <code>spec</code>; the budget's current level is not readable.</td></tr>
+<tr><td>Seeing device queues</td><td><span class="tag part">Partly</span></td><td>Only your own reads in flight (<code>ctx.pending</code>) and the clock.</td></tr>
+<tr><td>Lower precision for speed</td><td><span class="tag part">Partly</span></td><td>Fewer bytes moved; flops cost the same for every dtype (no tensor-core model).</td></tr>
+<tr><td>Changing the index while serving (insert, delete)</td><td><span class="tag no">No</span></td><td>HBF is read-only in <code>serve</code>; planned work.</td></tr>
+<tr><td>Choosing the hardware (m, tR, channels)</td><td><span class="tag no">No</span></td><td>Fixed by the task; read it from <code>spec</code> and adapt.</td></tr>
+<tr><td>Custom CUDA kernels, warp-level code</td><td><span class="tag no">No</span></td><td>Only torch ops are billed; lanes model per-block code.</td></tr>
+<tr><td>Host CPU compute, host DRAM, SSD tier, multiple GPUs</td><td><span class="tag no">No</span></td><td>The platform is one GPU + HBM + HBF.</td></tr>
+<tr><td>Filtered search, range search, other k</td><td><span class="tag no">No</span></td><td>Top-10 under the dataset's metric only.</td></tr>
+<tr><td>External libraries (faiss, numpy)</td><td><span class="tag no">No</span></td><td><code>torch</code>, <code>F</code>, <code>math</code> only.</td></tr>
+</table>
+<div class="box">Rule of thumb: an idea is expressible if it can be written as (1) a structure computed from the base vectors,
+(2) a placement of bytes into HBF pages, HBM tensors and SRAM tensors, and (3) a <code>serve</code> state machine that uses only
+the <code>ctx</code> methods above and torch operations.</div>
+
+<h2 id="billing">27. Billing in detail</h2>
 <table>
 <tr><th>What</th><th>Cost</th></tr>
-<tr><td>Each wake (one host round)</td><td>1.2 µs</td></tr>
-<tr><td>A torch op</td><td>max(flops / 7.5 TFLOP/s, bytes moved / 10 TB/s); no launch cost of its own</td></tr>
-<tr><td>Views and metadata (<code>reshape</code>, slicing, <code>transpose</code>, <code>.shape</code>, <code>.numel()</code>, …)</td><td>free</td></tr>
-<tr><td>Reading a value back to the host (<code>.item()</code>, <code>.tolist()</code>, <code>bool()</code>, <code>int()</code>, <code>float()</code>, printing)</td><td>0.5 µs + the tensor's bytes / 16 GB/s</td></tr>
-<tr><td>The same inside <code>ctx.lanes</code></td><td>0.02 µs + bytes at one SM's share of on-chip bandwidth</td></tr>
-<tr><td>Entering and leaving a lane phase</td><td>0.6 µs</td></tr>
-<tr><td>HBM read or write</td><td>bytes (rows rounded up to 32 B) / HBM bandwidth + 0.1 µs</td></tr>
-<tr><td>SRAM read or write</td><td>busiest channel's bytes (rows rounded up to 64 B) / channel link + 0.05 µs</td></tr>
-<tr><td>HBF read</td><td>whatever it takes on the device model (<a href="#device">section 8</a>); runs in parallel with your compute</td></tr>
+<tr><td>Each wake</td><td>1.2 µs</td></tr>
+<tr><td>A torch op</td><td>max(flops / 7.5 TFLOP/s, bytes moved / 10 TB/s)</td></tr>
+<tr><td>Views and metadata (<code>reshape</code>, slicing, <code>.T</code>, <code>.shape</code>, <code>.numel()</code>)</td><td>free</td></tr>
+<tr><td>Tensor → Python value (<code>.item()</code>, <code>.tolist()</code>, <code>int()</code>, <code>bool()</code>, <code>if t:</code>)</td><td>0.5 µs + bytes / 16 GB/s</td></tr>
+<tr><td>Same inside <code>ctx.lanes</code></td><td>0.02 µs + bytes at one SM's on-chip share</td></tr>
+<tr><td>Lane phase entry and exit</td><td>0.6 µs</td></tr>
+<tr><td>HBM read / write</td><td>bytes (rows rounded to 32 B) / HBM bandwidth + 0.1 µs</td></tr>
+<tr><td>SRAM read / write</td><td>busiest channel's bytes (rows rounded to 64 B) / channel link + 0.05 µs</td></tr>
 </table>
-<h4>How flops and bytes are counted</h4>
 <ul>
-  <li><b>Matrix products</b> (<code>matmul</code>, <code>mm</code>, <code>bmm</code>, <code>@</code>, <code>linear</code>, <code>einsum</code>, …): 2 × output elements × inner dimension.</li>
-  <li><b><code>cdist</code></b>: 3 × output elements × dimension.</li>
-  <li><b>Sorting</b> (<code>sort</code>, <code>argsort</code>, <code>topk</code>, <code>unique</code>, <code>kthvalue</code>, <code>median</code>): 4 × elements × log2(last dimension).</li>
-  <li><b>Everything else</b> (elementwise, reductions, comparisons): the largest element count among inputs and outputs.</li>
-  <li><b>Bytes moved:</b> inputs plus outputs. Gathers (<code>x[idx]</code>, <code>gather</code>, <code>index_select</code>) count 2 × output + index bytes; scatters and in-place writes count 2 × the written values.</li>
-  <li>Bytes depend on dtype, flops do not: fp16 halves the bytes of a memory-bound op but not the time of a compute-bound one.</li>
-</ul>
-<h4>What this means for design</h4>
-<ul>
-  <li>One op over all open queries costs about the same as one op for one query. Batch across queries.</li>
-  <li>A Python loop over queries outside a lane pays a sync for every value it reads back. Use tensor ops, or a lane.</li>
-  <li>Waiting is not billed as compute, but the clock moves: a read's latency shows up as query latency.</li>
-  <li>Offline work (<code>build</code>, <code>layout</code>) is free, so precompute everything that does not depend on the query.</li>
+  <li><b>Flops:</b> matrix products 2 × output × inner dimension; <code>cdist</code> 3 × output × dimension; sorts and <code>topk</code>
+    4 × elements × log2(last dimension); everything else the largest element count among inputs and outputs.</li>
+  <li><b>Bytes:</b> inputs plus outputs; gathers <code>x[idx]</code> count 2 × output + index bytes; scatters and in-place writes 2 × the written values.</li>
+  <li><b>Example:</b> <code>torch.cdist(q, cent)</code> for 64 queries × 256 centroids × 128 dims: 6.3 M flops → 0.84 µs; bytes 229 KB → 0.02 µs; billed 0.84 µs.</li>
 </ul>
 
-<!-- ============================================================ -->
-<h2 id="device">8. What the device does with a read</h2>
-<p>The device model follows the OCP HBF specification v0.7.0 and the HBF literature. One read goes through these steps:</p>
+<h2 id="device">28. The device's read path</h2>
 <ol>
-  <li><b>Arrive</b> at its channel's base die. Beyond the in-flight cap (<code>mocs</code>) it waits on the host side.</li>
-  <li><b>Base-die timer:</b> a normal read is held until the timer fires (0–2 µs, hidden). A Batch Read dispatches the held reads and itself at once.</li>
-  <li><b>Dispatch</b> to its unit (die × bank). If the page is already in one of the unit's <b>2 page buffers</b>, it is a hit: skip to step 6.</li>
-  <li><b>Sense queue:</b> the unit senses in strict arrival order. At the head, a read whose page an earlier sense just loaded is
-    also a hit. Otherwise the sense takes a buffer, draws its energy from the stack's <b>power budget</b> (waiting in order when
-    the budget is short; the budget can burst up to 10 tR worth of power), and takes tR (with jitter).</li>
-  <li><b>Core-die transfer:</b> the whole 4 KiB page crosses the die's core-die channel into the base die; the unit senses nothing
-    else until it is across.</li>
-  <li><b>Link transfer:</b> the requested bytes cross the channel link, one transfer at a time in ready order.</li>
-  <li><b>Complete:</b> the read appears in <code>events</code> at the next wake.</li>
+  <li>The read arrives at its channel's base die; beyond <code>mocs</code> reads in flight it waits on the host side.</li>
+  <li>A normal read is held until the base-die timer fires (0–2 µs); a Batch Read dispatches the held reads and itself at once.</li>
+  <li>At its bank: if the page is in one of the 2 page buffers, it is a hit (go to 6).</li>
+  <li>Otherwise it queues at the bank (strict order). At its turn, a page loaded by an earlier sense also hits; else it takes a buffer,
+    draws sense energy from the stack's power budget (waits if the budget is short; the budget can burst up to 10 × tR of power), and senses for tR.</li>
+  <li>The 4 KiB page moves to the base die over the die's core-die channel; the bank senses nothing else meanwhile.</li>
+  <li>The requested bytes cross the channel link, one transfer at a time.</li>
+  <li>The completion shows up in <code>events</code> at the next wake.</li>
 </ol>
+<p>Every sense adds refresh debt; debt above <code>refresh_slack_pages</code> makes senses retry sometimes. HBM has its own links.</p>
+
+<h2 id="language">29. Language rules</h2>
 <ul>
-  <li><b>Read disturb and refresh:</b> every sense adds refresh debt to its unit. Debt is paid by refresh operations (default host
-    policy or your own, see <a href="#plan">plan["refresh"]</a>). A sense on a plane owing more than <code>refresh_slack_pages</code>
-    may need a retry (one more sense).</li>
-  <li><b>HBM</b> has its own links, so HBM and HBF transfers run at the same time.</li>
-  <li><b>What a scheme controls:</b> which pages it reads and when, the order and grouping of submissions, Batch Read, partial reads,
-    where pages live (layout), and when refresh is paid. Everything else is the device.</li>
+  <li>Module level: one docstring, one <code>KNOBS</code> literal, top-level <code>def</code>s. Nothing else. No imports: <code>torch</code>,
+    <code>F</code> (torch.nn.functional) and <code>math</code> are already there.</li>
+  <li>Builtins: <code>abs min max range len float int bool enumerate zip sum any all isinstance tuple list dict round sorted reversed pow map filter</code>.</li>
+  <li>torch: tensor functions, creation functions, dtypes, <code>torch.linalg</code>, <code>torch.special</code>, <code>torch.fft</code>,
+    <code>torch.autograd.grad</code>, <code>torch.no_grad</code>.</li>
+  <li>Not allowed: <code>import</code>, <code>class</code>, <code>try</code>/<code>raise</code>, <code>global</code>, <code>yield</code>, <code>async</code>,
+    <code>del</code>, decorators, <code>match</code>; names starting with <code>_</code>; assigning attributes; mutable default arguments;
+    <code>torch.nn</code>, <code>torch.optim</code>, <code>torch.cuda</code>, file IO, global randomness (<code>rand</code>, <code>randperm</code>, …),
+    <code>empty</code>, <code>numpy</code>.</li>
+  <li><b>Easy to trip on:</b> a local variable may not reuse the name of a builtin (<code>sum</code>, <code>max</code>, <code>list</code>, …) or of one of
+    your own functions; knobs are read only as <code>ctx.knobs["literal"]</code>.</li>
+  <li>Size: ≤ 60 functions, ≤ 80 lines each, ≤ 160 000 characters.</li>
 </ul>
 
-<!-- ============================================================ -->
-<h2 id="language">9. Language rules</h2>
-<p>A static check runs before anything else. It keeps scheme code deterministic and away from the evaluator's state. It is not a
-security boundary: run code you do not trust in a container.</p>
+<h2 id="limits">30. Limits and errors</h2>
 <table>
-<tr><th></th><th>Rule</th></tr>
-<tr><td>Available names</td><td><code>torch</code>, <code>F</code> (torch.nn.functional), <code>math</code>, your own top-level functions,
-  and the builtins <code>abs min max range len float int bool enumerate zip sum any all isinstance tuple list dict round sorted
-  reversed pow map filter</code>.</td></tr>
-<tr><td>torch</td><td>Tensor functions and creation functions (<code>zeros</code>, <code>arange</code>, <code>cat</code>, <code>stack</code>,
-  <code>where</code>, <code>einsum</code>, <code>cdist</code>, <code>searchsorted</code>, <code>scatter</code>, …), dtypes, and the submodules
-  <code>torch.linalg</code>, <code>torch.special</code>, <code>torch.fft</code>, <code>torch.autograd.grad</code>. Context managers
-  <code>torch.no_grad</code> / <code>torch.enable_grad</code>.</td></tr>
-<tr><td>Not available</td><td><code>import</code>; <code>class</code>; <code>try</code>/<code>raise</code>; <code>global</code>/<code>nonlocal</code>;
-  <code>async</code>; <code>yield</code>; decorators; <code>match</code>; <code>del</code>; names or attributes starting with <code>_</code>;
-  attribute assignment; mutable default arguments; <code>torch.nn</code>, <code>torch.optim</code>, <code>torch.cuda</code>, <code>torch.jit</code>;
-  file IO (<code>load</code>, <code>save</code>); global random functions (<code>rand</code>, <code>randn</code>, <code>randperm</code>, <code>dropout</code>, …);
-  uninitialised memory (<code>empty</code>); <code>numpy</code>, <code>from_numpy</code>, <code>data_ptr</code>, storage access; <code>str.format</code>.</td></tr>
-<tr><td>Size</td><td>At most 60 functions, 80 lines per function, 160 000 characters per file; string constants at most 2000 characters.</td></tr>
-<tr><td>Function names</td><td>Lower case, digits and underscores, starting with a letter, at most 48 characters; must not shadow a builtin or <code>torch</code>/<code>F</code>/<code>math</code>.</td></tr>
+<tr><th>Limit</th><th>Value</th><th>Error when broken</th></tr>
+<tr><td>Index size</td><td>≤ 16 × data size</td><td>index too large</td></tr>
+<tr><td>HBF pages</td><td>≤ (8 − m) × 3 × data / 4 KiB</td><td>HBF capacity</td></tr>
+<tr><td>HBM tensors</td><td>≤ <code>hbm_bytes</code></td><td>HBM budget</td></tr>
+<tr><td>SRAM tensors</td><td>≤ <code>sram_bytes_per_channel</code> per channel</td><td>SRAM: … bytes per channel</td></tr>
+<tr><td>One read</td><td>64 B–4 KiB, 64-aligned, inside a page</td><td>submit: a read is 64 B to 4 KiB …</td></tr>
+<tr><td>Reads per call / in flight</td><td>2<sup>20</sup> / 2<sup>21</sup></td><td>submit: too many reads in flight</td></tr>
+<tr><td>State</td><td>min(clients × 64 KiB, 16 / 32 MiB)</td><td>state too large</td></tr>
+<tr><td>Lanes</td><td>≤ 65 536</td><td>ctx.lanes(n): n is an int in [0, 65536]</td></tr>
+<tr><td>Wall clock per job</td><td>1 h (100K), 2 h (1M)</td><td>exceeded the time limit</td></tr>
+<tr><td>Resident memory</td><td>10 GB at 1M</td><td>memory over budget</td></tr>
+<tr><td>Progress</td><td>1000 wakes with nothing in flight and nothing answered</td><td>deadlock: … queries open</td></tr>
+</table>
+<table>
+<tr><th>Other common errors</th><th>Cause</th></tr>
+<tr><td>Undeclared knobs</td><td><code>ctx.knobs["x"]</code> with <code>x</code> not in <code>KNOBS</code>.</td></tr>
+<tr><td>must not rebind reserved names or other function names</td><td>A local variable named like a builtin or one of your functions.</td></tr>
+<tr><td>layout must return {pages, hbm, sram, interleave}</td><td>A missing or extra key in the plan.</td></tr>
+<tr><td>ctx.effort exists only in serve</td><td>Effort read in <code>build</code> or <code>layout</code>.</td></tr>
+<tr><td>ctx.hbm: no tensor 'x' was placed there by layout</td><td>Name not in <code>plan["hbm"]</code>.</td></tr>
+<tr><td>finish: every qid must be an open query, once</td><td>A query answered twice or never arrived.</td></tr>
+<tr><td>finish: ids must be int64[len(qids), k=10]</td><td>Wrong shape or dtype.</td></tr>
+<tr><td>serve must return its state as a dict</td><td>Missing <code>return state</code>.</td></tr>
+<tr><td>a ctx.lanes loop must run to its end</td><td><code>break</code> / <code>return</code> inside the loop.</td></tr>
 </table>
 
-<!-- ============================================================ -->
-<h2 id="limits">10. All limits in one table</h2>
+<h2 id="tasks">31. Tasks and score</h2>
 <table>
-<tr><th>Limit</th><th>Value</th><th>When broken</th></tr>
-<tr><td>Index size</td><td>≤ 16 × data size</td><td>"index too large"</td></tr>
-<tr><td>HBF pages</td><td>≤ (8 − m) × 3 × data size / 4 KiB</td><td>"HBF capacity"</td></tr>
-<tr><td>HBM tensors</td><td>≤ <code>hbm_bytes</code> (5%–25% of the data at m = 4)</td><td>"HBM budget"</td></tr>
-<tr><td>SRAM tensors</td><td>≤ <code>sram_bytes_per_channel</code> per channel (0–2 MiB)</td><td>"SRAM: … bytes per channel"</td></tr>
-<tr><td>Interleave</td><td>1 to 2<sup>20</sup> pages</td><td>"plan interleave must be an int ≥ 1"</td></tr>
-<tr><td>One read</td><td>64 B–4 KiB, 64 B aligned, inside one page</td><td>"submit: a read is 64 B to 4 KiB …"</td></tr>
-<tr><td>Reads per submit / in flight</td><td>2<sup>20</sup> / 2<sup>21</sup></td><td>"submit: too many reads in flight"</td></tr>
-<tr><td>Lanes per loop</td><td>≤ 65 536</td><td>"ctx.lanes(n): n is an int in [0, 65536]"</td></tr>
-<tr><td>State</td><td>min(clients × 64 KiB, 16 MiB at 100K / 32 MiB at 1M)</td><td>"state too large"</td></tr>
-<tr><td>Wall clock per job</td><td>1 h (100K), 2 h (1M)</td><td>"exceeded the time limit"</td></tr>
-<tr><td>Resident memory per job</td><td>none (100K), 10 GB (1M)</td><td>"memory over budget"</td></tr>
-<tr><td>Deadlock</td><td>1000 wakes in a row with nothing in flight and no progress</td><td>"deadlock: … queries open"</td></tr>
-</table>
-
-<!-- ============================================================ -->
-<h2 id="tasks">11. Tasks and score</h2>
-<table>
-<tr><th>Task</th><th>What it tests</th><th>Data</th><th>Clients</th><th>Device</th></tr>
-<tr><td><code>high_load</code></td><td>throughput with saturated units</td><td>SIFT, 128-d uint8, L2</td><td>0.75 per parallel unit</td><td>rotates with the seed</td></tr>
-<tr><td><code>low_load_4</code></td><td>latency of the dependent chain</td><td>SIFT</td><td>4</td><td>rotates with the seed</td></tr>
-<tr><td><code>power_bound</code></td><td>the power budget binds first</td><td>SIFT</td><td>0.75 per unit</td><td>profile C</td></tr>
-<tr><td><code>data_deep</code></td><td>another distribution</td><td>DEEP, 96-d float32</td><td>0.5 per unit</td><td>rotates with the seed</td></tr>
+<tr><th>Task</th><th>What it tests</th><th>Data</th><th>Concurrent queries</th><th>Device</th></tr>
+<tr><td><code>high_load</code></td><td>throughput with busy banks</td><td>SIFT, 128-d uint8</td><td>0.75 per bank</td><td>varies with the seed</td></tr>
+<tr><td><code>low_load_4</code></td><td>latency</td><td>SIFT</td><td>4</td><td>varies with the seed</td></tr>
+<tr><td><code>power_bound</code></td><td>the power budget binds first</td><td>SIFT</td><td>0.75 per bank</td><td>C</td></tr>
+<tr><td><code>data_deep</code></td><td>another distribution</td><td>DEEP, 96-d float32</td><td>0.5 per bank</td><td>varies with the seed</td></tr>
 </table>
 <ul>
-  <li>Per task: <code>log2(throughput at recall@10 = 0.90 / throughput of batched brute force on the same device)</code>. 0 = as fast as the scan, +1 = twice as fast.</li>
-  <li>An operating point counts only if the worst 5% of its queries reach recall 0.3 on average.</li>
-  <li>A scheme that never reaches 0.90 scores between −16 and −8 depending on how close it gets.</li>
-  <li>The scheme's score is the mean over the four tasks. Scores at 0.95 and 0.99 are reported too.</li>
-  <li>Reported but not scored: build and layout time, index / HBF / HBM / SRAM bytes, and diagnostics (reads and senses per
-  query, page-buffer hit rate, unit utilisation, compute share, power-wait share, read rounds per query).</li>
+  <li>Per task: log2(your throughput at recall@10 = 0.90 ÷ batched brute force's on the same device). 0 = as fast as the scan, +1 = twice as fast.</li>
+  <li>An operating point counts only if its worst 5% of queries average recall ≥ 0.3.</li>
+  <li>Never reaching 0.90 scores between −16 and −8, by how close you get.</li>
+  <li>The score is the mean over the four tasks; 0.95 and 0.99 are reported too. Build time, index size and the diagnostics are reported, not scored.</li>
 </ul>
-
-<!-- ============================================================ -->
-<h2 id="errors">12. Common error messages</h2>
-<table>
-<tr><th>Message (beginning)</th><th>Cause</th></tr>
-<tr><td>Missing entry function …</td><td><code>build</code>, <code>layout</code> or <code>serve</code> is not defined.</td></tr>
-<tr><td>Entry … takes exactly N positional arguments</td><td>Wrong signature; no defaults, <code>*args</code> or keyword-only arguments.</td></tr>
-<tr><td>Undeclared knobs</td><td>A function reads <code>ctx.knobs["x"]</code> but <code>x</code> is not in <code>KNOBS</code>.</td></tr>
-<tr><td>Denied: torch.… / … is not allowed</td><td>The language rules in <a href="#language">section 9</a>.</td></tr>
-<tr><td>layout must return {pages, hbm, sram, interleave}</td><td>A key is missing or an unknown key was added.</td></tr>
-<tr><td>plan pages must be uint8[P, 4096]</td><td>Wrong dtype or page width.</td></tr>
-<tr><td>ctx.effort exists only in serve</td><td><code>build</code> or <code>layout</code> read the effort.</td></tr>
-<tr><td>ctx.hbm: no tensor 'x' was placed there by layout</td><td>The name is not a key of <code>plan["hbm"]</code>.</td></tr>
-<tr><td>finish: every qid must be an open query, once</td><td>A query was answered twice, or an id that never arrived.</td></tr>
-<tr><td>finish: ids must be int64[len(qids), k=10]</td><td>Wrong shape or dtype of the answer.</td></tr>
-<tr><td>a ctx.lanes loop must run to its end</td><td><code>break</code> or <code>return</code> inside the loop.</td></tr>
-<tr><td>serve must return its state as a dict</td><td><code>serve</code> returned something else (often <code>None</code>).</td></tr>
-</table>
-<p>A failing task is recorded with a <code>failure</code> string and the reason; the other tasks still run.</p>
 
 </main>
 </div>
